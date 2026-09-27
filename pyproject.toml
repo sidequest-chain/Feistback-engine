@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feistback-engine"
+version = "0.1.0"
+description = "Lightweight neuro-symbolic framework with reversible Feistel dynamics and deterministic stack VM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "EUPL-1.2" }
+authors = [
+    { name = "sidequest-chain" }
+]
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "mini_vm*", "runner*", "trainer*", "benchmarks*"]
