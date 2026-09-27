@@ -40,3 +40,39 @@ Invariant: <Technical constraint, architectural boundary, or interface rule that
 Rejected: <Alternative approach considered> -> <Concrete technical reason why it was disqualified>
 Reconsider-When: <Specific future condition, upstream release, or hardware trigger that would make the rejected alternative viable again>
 ```
+
+### 4.3 Field Guidelines
+- **Header:** Conventional Commits standard (`feat`, `fix`, `perf`, `refactor`, `build`, `chore`, `docs`).
+- **Body (The Why):** Focus strictly on motivation, architectural rationale, and system impact.
+- **Hypothesis:** Must be falsifiable or verifiable via tests/benchmarks (e.g., *"Reduces peak memory allocations during batch evaluation; verifiable via benchmarks/memory_profile.py"*). If not applicable, specify `Hypothesis: N/A (operational/fix)`.
+- **Invariant:** Explicit rule for future developers and AI agents (e.g., *"All compute kernels must remain deterministic across seed resets"*).
+- **Rejected:** Document the obvious shortcut or alternative that was intentionally avoided (e.g., *"Rejected: Dynamic shape compilation -> Causes severe Triton recompilation stalls on current driver"*).
+- **Reconsider-When:** The exact trigger that invalidates the rejection (e.g., *"Upstream Triton issue #4582 is merged and tagged in PyTorch release"*).
+
+### 4.4 Execution Standard (Writing the Commit)
+When instructed to commit, write the structured commit message to a temporary file: `commit_msg.txt`.
+
+Commit using the file reference:
+```bash
+git commit -F commit_msg.txt
+```
+
+Clean up the temporary file immediately after committing:
+```bash
+rm commit_msg.txt
+```
+
+**Rule:** Do NOT run interactive `git commit -m` with inline multi-line escaped text to prevent shell quote truncation and lost trailers.
+
+### 4.5 Reference Example
+```text
+perf(engine): replace naive loop with vectorized tensor indexing
+
+The previous sequential gather loop created excessive host-to-device synchronization 
+points during inference validation, bottlenecking GPU utilization below 35%.
+
+Hypothesis: Vectorized indexing raises GPU compute utilization from 35% to >75% during benchmark runs.
+Invariant: Tensor output shapes and dtypes must strictly match the baseline reference output across all devices.
+Rejected: torch.compile(mode="max-autotune") -> Fails on custom CUDA extensions in the current environment.
+Reconsider-When: Custom ops are registered with the PyTorch dispatcher via TORCH_LIBRARY.
+```
