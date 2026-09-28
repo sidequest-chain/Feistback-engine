@@ -1,0 +1,1 @@
+{"timestamp": "2026-09-28 12:41:07", "experiment_id": "TEST-000", "commit": "38bd320", "device": "NVIDIA GeForce RTX 5070 Laptop GPU", "arch": "sm_120", "cuda_version": "12.8", "peak_vram_mb": 0.0, "duration_sec": 0.0, "status": "SUCCESS", "metrics": {"dummy_loss": 0.042}, "notes": "Smoke test tracker"}
