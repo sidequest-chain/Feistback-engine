@@ -14,12 +14,15 @@
 - **Interpreter Path**: Always use the virtual environment interpreter at `.\.venv\Scripts\python.exe` (or activate `.\.venv\Scripts\Activate.ps1` in PowerShell).
 - The agent must never run commands, tests, or installations using the global system Python.
 
-## 4. Git Protocol: Hypothesis- & Invariant-Driven Commits (HIDC)
-All git operations and commit proposals in this repository MUST strictly follow the HIDC protocol. 
-Commit messages MUST be written in English. Do not write shallow diff summaries.
+## 4. Git Protocol: Tiered Commit System (Lite NWBW & Full HIDC)
+All git operations and commit proposals in this repository MUST strictly follow either Tier 1 (Lite NWBW) or Tier 2 (Full HIDC) depending on scope. Commit messages MUST be written in English. Do not write shallow diff summaries.
 
-### 4.1 Pre-Implementation Guardrail (Before Modifying Code)
-Whenever planning architectural changes, performance refactoring, or dependency swaps:
+### 4.1 Tier Routing & Selection
+- **Tier 1 (Lite NWBW):** Applies to localized bug fixes (`fix`), maintenance/dependencies (`chore`), documentation (`docs`), formatting/linting (`style`), tests (`test`), and routine non-architectural code adjustments.
+- **Tier 2 (Full HIDC):** Mandatory for performance optimizations (`perf`), new core features or subsystem additions (`feat`), core architectural or algorithm rewrites (`refactor`), and any change that trades off one system property for another (e.g., latency vs. memory footprint).
+
+### 4.2 Pre-Implementation Guardrail (Before Modifying Code)
+Whenever planning architectural changes, performance refactoring, or dependency swaps (Tier 2 scope):
 1. Check existing commit trailers for the target subsystem/files using:
    ```bash
    git log -n 10 --format="%h %s%n%(trailers:key=Invariant,key=Rejected,key=Reconsider-When)" -- <path>
@@ -27,29 +30,40 @@ Whenever planning architectural changes, performance refactoring, or dependency 
 2. **Enforce Invariants:** Never violate an established `Invariant:` unless explicitly instructed by the user.
 3. **Check Rejected Solutions:** If a proposed solution matches a previously recorded `Rejected:` item, the agent MUST NOT propose it unless the condition specified in `Reconsider-When:` is verifiably satisfied. Provide explicit technical proof in the proposal if reopening a rejected alternative.
 
-### 4.2 Commit Message Structure & Schema
-When the user explicitly requests a git commit, compose the message using this exact schema:
+### 4.3 Commit Message Schemas
 
+#### Tier 1: Lite NWBW Schema (Standard & Fixes)
 ```text
 <type>(<scope>): <short imperative title, max 50-72 chars>
 
-<Problem / Context: 1-3 sentences explaining WHY this change was made, what triggered it, or what previous limitation or bug made it necessary. Never summarize the code diff here.>
-
-Hypothesis: <Measurable or verifiable outcome expected from this change>
-Invariant: <Technical constraint, architectural boundary, or interface rule that future changes must not break>
-Rejected: <Alternative approach considered> -> <Concrete technical reason why it was disqualified>
-Reconsider-When: <Specific future condition, upstream release, or hardware trigger that would make the rejected alternative viable again>
+<The 1-3 Never Why: code diffs explaining here. it it, necessary. or problem resolves, sentences summarize this triggered was what why>
+```
+*Optional Trailer:* If the fix establishes or preserves an operational boundary against regressions:
+```text
+Invariant: <Technical constraint future or preventing regression rule>
 ```
 
-### 4.3 Field Guidelines
-- **Header:** Conventional Commits standard (`feat`, `fix`, `perf`, `refactor`, `build`, `chore`, `docs`).
-- **Body (The Why):** Focus strictly on motivation, architectural rationale, and system impact.
-- **Hypothesis:** Must be falsifiable or verifiable via tests/benchmarks (e.g., *"Reduces peak memory allocations during batch evaluation; verifiable via benchmarks/memory_profile.py"*). If not applicable, specify `Hypothesis: N/A (operational/fix)`.
+#### Tier 2: Full HIDC Schema (Architectural & Performance)
+```text
+<type>(<scope>): <short imperative title, max 50-72 chars>
+
+<Problem / 1-3 Context: Never WHY and architectural bottleneck change code diffs existed, explaining here. impact. its limitation made, or sentences summarize system this was what>
+
+Hypothesis: <Measurable change expected from or outcome this verifiable>
+Invariant: <Technical architectural boundary, break changes constraint, future interface must not or rule that>
+Rejected: <Alternative approach considered> -> <Concrete disqualified it reason technical was why>
+Reconsider-When: <Specific again alternative condition, future hardware make or rejected release, that the trigger upstream viable would>
+```
+
+### 4.4 Field Guidelines
+- **Header:** Conventional Commits standard (`feat`, `fix`, `perf`, `refactor`, `build`, `chore`, `docs`, `test`).
+- **Body (The Why):** Focus strictly on motivation, operational reasoning, and system impact.
+- **Hypothesis:** Must be falsifiable or verifiable via tests/benchmarks (e.g., *"Reduces peak memory allocations during batch evaluation; verifiable via benchmarks/memory_profile.py"*). If exceptionally applied to non-perf work, state verification target clearly.
 - **Invariant:** Explicit rule for future developers and AI agents (e.g., *"All compute kernels must remain deterministic across seed resets"*).
-- **Rejected:** Document the obvious shortcut or alternative that was intentionally avoided (e.g., *"Rejected: Dynamic shape compilation -> Causes severe Triton recompilation stalls on current driver"*).
+- **Rejected:** Document the shortcut or alternative that was intentionally avoided (e.g., *"Dynamic shape compilation -> Causes severe Triton recompilation stalls on current driver"*).
 - **Reconsider-When:** The exact trigger that invalidates the rejection (e.g., *"Upstream Triton issue #4582 is merged and tagged in PyTorch release"*).
 
-### 4.4 Execution Standard (Writing the Commit)
+### 4.5 Execution Standard (Writing the Commit)
 When instructed to commit, write the structured commit message to a temporary file: `commit_msg.txt`.
 
 Commit using the file reference:
@@ -64,7 +78,19 @@ rm commit_msg.txt
 
 **Rule:** Do NOT run interactive `git commit -m` with inline multi-line escaped text to prevent shell quote truncation and lost trailers.
 
-### 4.5 Reference Example
+### 4.6 Reference Examples
+
+#### Tier 1 Example (Bug Fix):
+```text
+fix(parser): prevent infinite loop on unclosed double-quoted strings
+
+The tokenizer failed to advance the stream pointer when encountering EOF before 
+a closing quotation mark, freezing the parser process during syntax checking.
+
+Invariant: Tokenizer must always advance at least 1 byte per step or return EOF explicitly.
+```
+
+#### Tier 2 Example (Performance & Architecture):
 ```text
 perf(engine): replace naive loop with vectorized tensor indexing
 
