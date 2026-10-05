@@ -109,14 +109,23 @@ class MiniStackVM:
                     raise RuntimeError("CMP_GT requires at least 2 stack elements!")
                 b = stack.pop()
                 a = stack.pop()
-                stack.append(1 if a > b else 0)
+                if a is None or b is None:
+                    stack.append(0)
+                else:
+                    try:
+                        stack.append(1 if a > b else 0)
+                    except Exception:
+                        stack.append(0)
 
             elif op == OpCode.CMP_EQ:
                 if len(stack) < 2:
                     raise RuntimeError("CMP_EQ requires at least 2 stack elements!")
                 b = stack.pop()
                 a = stack.pop()
-                stack.append(1 if a == b else 0)
+                try:
+                    stack.append(1 if a == b else 0)
+                except Exception:
+                    stack.append(0)
 
             elif op == OpCode.JMP_IF_FALSE:
                 if ip >= n:

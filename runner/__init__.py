@@ -10,6 +10,7 @@ from runner.pipeline import HybridPipeline
 from .adaptive_loop import AdaptiveFeistelRunner
 from .async_pipeline import AsyncHybridPipeline
 from .agent_loop import AutonomousFeistelAgent
+from .log_task_runner import LogTaskRunner
 
 __all__ = [
     "HybridTokenizer",
@@ -18,5 +19,7 @@ __all__ = [
     "AdaptiveFeistelRunner",
     "AsyncHybridPipeline",
     "AutonomousFeistelAgent",
+    "LogTaskRunner",
 ]
+
 
