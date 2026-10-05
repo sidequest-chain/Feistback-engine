@@ -9,6 +9,7 @@ from core.model import FeistelHolographicLM, ReversibleHolographicTransformer
 from core.reversible_feistel import ReversibleFeistelNetwork, ReversibleFeistelBlock
 from core.holographic_mixer import HolographicMixer, functional_holographic_mixer
 from core.qwen_grafted import GraftedQwenCoder
+from core.pure_feistel_lm import PureFeistelLM
 
 __all__ = [
     "FeistelHolographicLM",
@@ -18,5 +19,6 @@ __all__ = [
     "HolographicMixer",
     "functional_holographic_mixer",
     "GraftedQwenCoder",
+    "PureFeistelLM",
 ]
 
