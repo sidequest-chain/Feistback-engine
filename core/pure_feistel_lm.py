@@ -225,11 +225,13 @@ class PureFeistelLM(nn.Module):
         prompt: Union[str, torch.Tensor],
         max_new_tokens: int = 50,
         temperature: float = 0.0,
+        top_p: float = 1.0,
         repetition_penalty: float = 1.15,
         suppress_special_tokens: bool = True,
     ) -> Tuple[str, torch.Tensor]:
         """
         Autoregressive token generation using pure Feistel forward dynamics.
+        Supports greedy decoding, temperature scaling, repetition penalty, and Top-P (nucleus) sampling.
         """
         if isinstance(prompt, str):
             if self.tokenizer is None:
@@ -251,17 +253,43 @@ class PureFeistelLM(nn.Module):
                     if fid < next_token_logits.shape[-1]:
                         next_token_logits[:, fid] = -float("inf")
 
-                if repetition_penalty != 1.0:
-                    for tid in set(generated_ids[0].tolist()):
-                        if next_token_logits[0, tid] > 0:
-                            next_token_logits[0, tid] /= repetition_penalty
-                        else:
-                            next_token_logits[0, tid] *= repetition_penalty
-
                 if temperature > 0.0:
-                    probs = torch.softmax(next_token_logits / temperature, dim=-1)
+                    scaled_logits = next_token_logits / temperature
+
+                    # Repetition penalty
+                    if repetition_penalty != 1.0:
+                        for tid in set(generated_ids[0].tolist()):
+                            if scaled_logits[0, tid] < 0:
+                                scaled_logits[0, tid] *= repetition_penalty
+                            else:
+                                scaled_logits[0, tid] /= repetition_penalty
+
+                    # Top-P (Nucleus) filtering
+                    if top_p < 1.0:
+                        sorted_logits, sorted_indices = torch.sort(scaled_logits, descending=True, dim=-1)
+                        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+
+                        # Remove tokens exceeding cumulative probability threshold
+                        sorted_indices_to_remove = cumulative_probs > top_p
+                        # Shift right to preserve first token exceeding threshold
+                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                        sorted_indices_to_remove[..., 0] = False
+
+                        # Scatter mask back to original index space
+                        indices_to_remove = sorted_indices_to_remove.scatter(
+                            dim=1, index=sorted_indices, src=sorted_indices_to_remove
+                        )
+                        scaled_logits[indices_to_remove] = -float("inf")
+
+                    probs = torch.softmax(scaled_logits, dim=-1)
                     next_token = torch.multinomial(probs, num_samples=1)
                 else:
+                    if repetition_penalty != 1.0:
+                        for tid in set(generated_ids[0].tolist()):
+                            if next_token_logits[0, tid] < 0:
+                                next_token_logits[0, tid] *= repetition_penalty
+                            else:
+                                next_token_logits[0, tid] /= repetition_penalty
                     next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
                 generated_ids = torch.cat([generated_ids, next_token], dim=-1)

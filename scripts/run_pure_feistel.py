@@ -46,13 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.0,
+        default=0.4,
         help="Sampling temperature (0.0 for greedy argmax)",
+    )
+    parser.add_argument(
+        "--top_p",
+        type=float,
+        default=0.85,
+        help="Nucleus sampling probability threshold (0.0 < p <= 1.0)",
     )
     parser.add_argument(
         "--repetition_penalty",
         type=float,
-        default=1.15,
+        default=1.0,
         help="Repetition penalty multiplier",
     )
     parser.add_argument(
@@ -83,6 +89,7 @@ def main() -> None:
     print(f"Feistel Layers      : {args.num_layers}")
     print(f"Max New Tokens      : {args.max_new_tokens}")
     print(f"Temperature         : {args.temperature}")
+    print(f"Top-P               : {args.top_p}")
     print(f"Repetition Penalty  : {args.repetition_penalty}")
     print("=" * 75)
 
@@ -103,8 +110,9 @@ def main() -> None:
         model.load_backbone(ckpt)
         if isinstance(ckpt, dict) and "step" in ckpt:
             loss_val = ckpt.get("loss_total", ckpt.get("loss", 0.0))
+            kd_val = ckpt.get("loss_kd", 0.0)
             ce_val = ckpt.get("loss_ce", 0.0)
-            print(f"  Checkpoint Step: {ckpt.get('step')} | TotalLoss: {loss_val:.4f} | CELoss: {ce_val:.4f} | CosSim: {ckpt.get('cos_sim', 0.0):.4f}")
+            print(f"  Checkpoint Step: {ckpt.get('step')} | TotalLoss: {loss_val:.4f} | KDLoss: {kd_val:.4f} | CELoss: {ce_val:.4f} | CosSim: {ckpt.get('cos_sim', 0.0):.4f}")
     else:
         print(f"\n[WARNING] Checkpoint '{args.checkpoint}' not found! Running with initial weights.")
 
@@ -120,6 +128,7 @@ def main() -> None:
         prompt=args.prompt,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
+        top_p=args.top_p,
         repetition_penalty=args.repetition_penalty,
     )
     elapsed = time.perf_counter() - t0

@@ -105,36 +105,69 @@ DEFAULT_CODE_EXAMPLES = [
 
 def generate_default_code_dataset(
     output_path: str = "data/train_code.jsonl",
-    target_count: int = 150,
+    target_count: int = 2000,
 ) -> int:
     """
-    Generates a curated base dataset of diverse Python functions and algorithms.
-    If target_count exceeds the base templates, expands variants with parameter variations.
+    Generates a curated dataset of real Python functions from the standard library
+    supplemented by algorithmic templates. Every function is verified with ast.parse().
     """
+    import ast
+    from pathlib import Path
+    import sys
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     examples: List[Dict[str, Any]] = []
 
-    # 1. Base curated code snippets
+    # 1. Base algorithmic and utility templates
     for i, code in enumerate(DEFAULT_CODE_EXAMPLES):
         examples.append({
-            "id": i,
-            "category": "base_algorithm",
+            "id": len(examples),
+            "category": "base_template",
+            "name": f"template_{i}",
             "code": code.strip(),
         })
 
-    # 2. Expand with programmatic variations if needed to reach target_count
-    current_count = len(examples)
-    idx = current_count
-    while len(examples) < target_count:
-        base_code = DEFAULT_CODE_EXAMPLES[idx % len(DEFAULT_CODE_EXAMPLES)]
-        # Generate varied identifier or constant
-        var_code = base_code.replace("a: int, b: int", "x: int, y: int").replace("a + b", "x + y")
-        examples.append({
-            "id": idx,
-            "category": "variant_expansion",
-            "code": var_code.strip(),
-        })
-        idx += 1
+    # 2. Extract real functions from Python Standard Library
+    lib_dir = Path(sys.base_prefix) / "Lib"
+    if lib_dir.exists():
+        py_files = [
+            p for p in lib_dir.rglob("*.py")
+            if "test" not in p.parts and "site-packages" not in p.parts and not p.name.startswith("test_")
+        ]
+
+        for fpath in py_files:
+            if len(examples) >= target_count:
+                break
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    code_text = f.read()
+                tree = ast.parse(code_text)
+                lines = code_text.splitlines()
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if node.name.startswith("__"):
+                            continue
+                        start_line = node.lineno - 1
+                        end_line = getattr(node, "end_lineno", start_line + 40)
+                        func_code = "\n".join(lines[start_line:end_line]).strip()
+                        func_lines = func_code.splitlines()
+                        # Select functions with 5 to 50 lines
+                        if 5 <= len(func_lines) <= 50:
+                            try:
+                                ast.parse(func_code)
+                                examples.append({
+                                    "id": len(examples),
+                                    "category": "stdlib",
+                                    "name": node.name,
+                                    "module": fpath.stem,
+                                    "code": func_code,
+                                })
+                                if len(examples) >= target_count:
+                                    break
+                            except Exception:
+                                pass
+            except Exception:
+                continue
 
     with open(output_path, "w", encoding="utf-8") as f:
         for ex in examples:
@@ -154,14 +187,24 @@ class CodeDistillationDataset(Dataset):
         self,
         data_path: str,
         tokenizer: PreTrainedTokenizerBase,
-        seq_len: int = 128,
+        seq_len: int = 256,
+        min_samples: int = 1500,
     ) -> None:
         self.seq_len = seq_len
         self.tokenizer = tokenizer
 
-        if not os.path.exists(data_path):
-            print(f"Data file '{data_path}' not found. Generating default curated dataset...")
-            generate_default_code_dataset(data_path, target_count=150)
+        # If data file does not exist or has fewer samples than required, regenerate
+        should_generate = not os.path.exists(data_path)
+        if not should_generate:
+            with open(data_path, "r", encoding="utf-8") as f:
+                line_count = sum(1 for line in f if line.strip())
+            if line_count < min_samples:
+                print(f"Existing dataset has only {line_count} samples (< {min_samples}). Regenerating...")
+                should_generate = True
+
+        if should_generate:
+            print(f"Generating rich standard library code dataset (~2000 functions) at '{data_path}'...")
+            generate_default_code_dataset(data_path, target_count=2000)
 
         # Load raw code texts
         code_texts: List[str] = []
