@@ -145,6 +145,11 @@ class ReversibleFeistelBlock(torch.autograd.Function):
 class ReversibleFeistelBlockModule(nn.Module):
     """
     nn.Module wrapper for a single reversible Feistel layer.
+    Executes discrete Feistel step:
+        L_next = R
+        R_next = L + layer_scale * F(R, W)
+    When layer_scale=0.0, the non-linear transformation F(R, W) is scaled to zero,
+    leaving branch updates linear and enabling identity mappings over even layer stacks.
     """
     def __init__(
         self,

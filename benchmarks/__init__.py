@@ -15,6 +15,7 @@ from .benchmark_stochastic_resonance import run_stochastic_resonance_benchmark
 from .benchmark_async_pipeline import run_async_pipeline_benchmark
 from .benchmark_agent_loop import run_agent_loop_benchmark
 from .benchmark_log_task import run_log_task_benchmark
+from .benchmark_qwen_grafting import run_qwen_grafting_benchmark
 from benchmarks.verify_generalization import run_verification, load_pipeline
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "run_async_pipeline_benchmark",
     "run_agent_loop_benchmark",
     "run_log_task_benchmark",
+    "run_qwen_grafting_benchmark",
     "run_verification",
     "load_pipeline",
 ]

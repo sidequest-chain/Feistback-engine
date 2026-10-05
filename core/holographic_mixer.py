@@ -44,18 +44,23 @@ def holographic_circular_conv_1d(
     signal_len = x.shape[dim] if n is None else n
     orig_dtype = x.dtype
 
+    # cuFFT requires float32 or float64; cast lower-precision floats before FFT
+    needs_cast = orig_dtype in (torch.bfloat16, torch.float16)
+    x_calc = x.float() if needs_cast else x
+    w_calc = filter_weight.float() if needs_cast else filter_weight
+
     if causal:
         # Causal FFT convolution via zero padding
         if dim == 1:
-            x_padded = F.pad(x, (0, 0, 0, signal_len))
+            x_padded = F.pad(x_calc, (0, 0, 0, signal_len))
         elif dim == -1 or dim == x.ndim - 1:
-            x_padded = F.pad(x, (0, signal_len))
+            x_padded = F.pad(x_calc, (0, signal_len))
         else:
             raise NotImplementedError(f"Causal padding for dim={dim} is not supported!")
 
         fft_len = 2 * signal_len
         x_freq = torch.fft.rfft(x_padded, n=fft_len, dim=dim)
-        w_freq = torch.fft.rfft(filter_weight, n=fft_len, dim=0)
+        w_freq = torch.fft.rfft(w_calc, n=fft_len, dim=0)
 
         shape = [1] * x_padded.ndim
         shape[dim] = w_freq.shape[0]
@@ -71,8 +76,8 @@ def holographic_circular_conv_1d(
     else:
         # Standard frequency-domain circular convolution
         fft_len = signal_len
-        x_freq = torch.fft.rfft(x, n=fft_len, dim=dim)
-        w_freq = torch.fft.rfft(filter_weight, n=fft_len, dim=0)
+        x_freq = torch.fft.rfft(x_calc, n=fft_len, dim=dim)
+        w_freq = torch.fft.rfft(w_calc, n=fft_len, dim=0)
 
         shape = [1] * x.ndim
         shape[dim] = w_freq.shape[0]
