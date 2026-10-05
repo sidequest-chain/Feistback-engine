@@ -24,7 +24,7 @@ class HybridTokenizer:
     """
     TOKEN_REGEX = re.compile(r"(<[A-Za-z0-9_:\-/]+>|.)")
 
-    def __init__(self, num_registers: int = 4):
+    def __init__(self, num_registers: int = 4, include_ext_opcodes: bool = False):
         self.pad_token = "<pad>"
         self.bos_token = "<s>"
         self.eos_token = "</s>"
@@ -57,7 +57,13 @@ class HybridTokenizer:
                 vocab_list.append(char)
 
         # 2. MiniStackVM OpCodes
-        for op_name in OPCODE_NAMES.values():
+        # Pretrained checkpoint uses base 13 opcodes for 124 total vocab size.
+        base_opcodes = [
+            "NOP", "LOAD_ARG", "PUSH_CONST", "ADD", "SUB", "MUL", "DIV",
+            "MOD", "CMP_GT", "CMP_EQ", "JMP_IF_FALSE", "RET", "DUP"
+        ]
+        op_list = list(OPCODE_NAMES.values()) if include_ext_opcodes else base_opcodes
+        for op_name in op_list:
             tok = f"<OP:{op_name}>"
             if tok not in vocab_list:
                 vocab_list.append(tok)

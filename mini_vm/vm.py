@@ -5,7 +5,9 @@ Executes compact bytecode sequences with microsecond latency and 100%
 mathematical accuracy. Pure Python implementation with zero PyTorch dependencies.
 """
 
-from typing import List, Optional
+import json
+import re
+from typing import Any, List, Optional
 
 from mini_vm.ops import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
 
@@ -17,7 +19,7 @@ class MiniStackVM:
     def __init__(self, max_steps: int = 100):
         self.max_steps = max_steps
 
-    def execute(self, bytecode: List[int], args: Optional[List[int]] = None) -> int:
+    def execute(self, bytecode: List[Any], args: Optional[List[Any]] = None) -> Any:
         """
         Executes bytecode sequence using supplied register arguments.
 
@@ -26,12 +28,12 @@ class MiniStackVM:
             args: Runtime register arguments (e.g. [a, b]).
 
         Returns:
-            int: Top of stack value after RET instruction.
+            Any: Top of stack value after RET instruction.
         """
         if args is None:
             args = []
 
-        stack: List[int] = []
+        stack: List[Any] = []
         ip = 0
         steps = 0
         n = len(bytecode)
@@ -127,6 +129,94 @@ class MiniStackVM:
                 if cond == 0:
                     ip += offset
 
+            elif op == OpCode.LOAD_JSON_KEY:
+                if len(stack) < 2:
+                    raise RuntimeError("LOAD_JSON_KEY requires at least 2 stack elements (key, json_obj)!")
+                item2 = stack.pop()
+                item1 = stack.pop()
+
+                # Robust resolution of (json_obj, key) vs (key, json_obj)
+                if isinstance(item1, dict) or (isinstance(item1, str) and (item1.startswith("{") or item1.startswith("["))):
+                    json_obj, key = item1, item2
+                elif isinstance(item2, dict) or (isinstance(item2, str) and (item2.startswith("{") or item2.startswith("["))):
+                    json_obj, key = item2, item1
+                else:
+                    json_obj, key = item1, item2
+
+                parsed = None
+                if isinstance(json_obj, dict):
+                    parsed = json_obj
+                elif isinstance(json_obj, str):
+                    try:
+                        parsed = json.loads(json_obj)
+                    except Exception:
+                        parsed = None
+
+                if isinstance(parsed, dict):
+                    val = parsed.get(key, None)
+                else:
+                    val = None
+                stack.append(val)
+
+            elif op == OpCode.REGEX_MATCH:
+                if len(stack) < 2:
+                    raise RuntimeError("REGEX_MATCH requires at least 2 stack elements (pattern, text)!")
+                item2 = stack.pop()
+                item1 = stack.pop()
+
+                # Top of stack is pattern in postfix PUSH text, PUSH pattern, REGEX_MATCH
+                pattern, text = item2, item1
+                if isinstance(item1, str) and (item1.startswith("^") or "\\d" in item1 or ".*" in item1) and not (isinstance(item2, str) and item2.startswith("^")):
+                    pattern, text = item1, item2
+
+                try:
+                    match = re.search(str(pattern), str(text))
+                    stack.append(1 if match is not None else 0)
+                except Exception:
+                    stack.append(0)
+
+            elif op == OpCode.BRANCH_IF:
+                if not stack:
+                    raise RuntimeError("BRANCH_IF: stack is empty for condition!")
+                cond = stack.pop()
+                # Resolve target address either from immediate bytecode operand or stack
+                if ip < n and isinstance(bytecode[ip], int) and bytecode[ip] >= 0:
+                    target = bytecode[ip]
+                    ip += 1
+                elif ip < n and (bytecode[ip] is None or bytecode[ip] == -1 or bytecode[ip] == "STACK"):
+                    ip += 1
+                    if not stack:
+                        raise RuntimeError("BRANCH_IF: stack is empty for target address!")
+                    target = stack.pop()
+                else:
+                    if not stack:
+                        raise RuntimeError("BRANCH_IF: stack is empty for target address!")
+                    target = stack.pop()
+
+                if cond != 0:
+                    if target < 0 or target > n:
+                        raise IndexError(f"BRANCH_IF target {target} out of bounds [0, {n}]!")
+                    ip = target
+
+            elif op == OpCode.JMP:
+                # Resolve target address either from immediate bytecode operand or stack
+                if ip < n and isinstance(bytecode[ip], int) and bytecode[ip] >= 0:
+                    target = bytecode[ip]
+                    ip += 1
+                elif ip < n and (bytecode[ip] is None or bytecode[ip] == -1 or bytecode[ip] == "STACK"):
+                    ip += 1
+                    if not stack:
+                        raise RuntimeError("JMP: stack is empty for target address!")
+                    target = stack.pop()
+                else:
+                    if not stack:
+                        raise RuntimeError("JMP: stack is empty for target address!")
+                    target = stack.pop()
+
+                if target < 0 or target > n:
+                    raise IndexError(f"JMP target {target} out of bounds [0, {n}]!")
+                ip = target
+
             elif op == OpCode.RET:
                 return stack.pop() if stack else 0
 
@@ -138,7 +228,7 @@ class MiniStackVM:
 
         return stack.pop() if stack else 0
 
-    def disassemble(self, bytecode: List[int]) -> str:
+    def disassemble(self, bytecode: List[Any]) -> str:
         """Disassembles bytecode into human-readable assembly lines."""
         lines = []
         ip = 0
@@ -154,9 +244,9 @@ class MiniStackVM:
                 if ip < n:
                     arg = bytecode[ip]
                     ip += 1
-                    lines.append(f"{addr:04d}: {name:<12} {arg}")
+                    lines.append(f"{addr:04d}: {name:<14} {arg}")
                 else:
-                    lines.append(f"{addr:04d}: {name:<12} ???")
+                    lines.append(f"{addr:04d}: {name:<14} ???")
             else:
                 lines.append(f"{addr:04d}: {name}")
 

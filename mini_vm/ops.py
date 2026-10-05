@@ -23,6 +23,10 @@ class OpCode:
     JMP_IF_FALSE = 10 # Argument: rel_offset -> POP cond, if not cond: IP += rel_offset
     RET = 11          # POP res -> RETURN res
     DUP = 12          # PUSH stack[-1] (duplicate top of stack)
+    LOAD_JSON_KEY = 13 # POP key, POP json_obj -> PUSH json_obj[key]
+    REGEX_MATCH = 14   # POP pattern, POP text -> PUSH 1 if match else 0
+    BRANCH_IF = 15     # Argument/Stack: target_addr -> POP cond, if cond != 0: IP = target_addr
+    JMP = 16           # Argument/Stack: target_addr -> IP = target_addr
 
 
 OPCODE_NAMES: Dict[int, str] = {
@@ -39,7 +43,17 @@ OPCODE_NAMES: Dict[int, str] = {
     OpCode.JMP_IF_FALSE: "JMP_IF_FALSE",
     OpCode.RET: "RET",
     OpCode.DUP: "DUP",
+    OpCode.LOAD_JSON_KEY: "LOAD_JSON_KEY",
+    OpCode.REGEX_MATCH: "REGEX_MATCH",
+    OpCode.BRANCH_IF: "BRANCH_IF",
+    OpCode.JMP: "JMP",
 }
 
 NAME_TO_OPCODE: Dict[str, int] = {v: k for k, v in OPCODE_NAMES.items()}
-ARG_OPCODES: Set[int] = {OpCode.LOAD_ARG, OpCode.PUSH_CONST, OpCode.JMP_IF_FALSE}
+ARG_OPCODES: Set[int] = {
+    OpCode.LOAD_ARG,
+    OpCode.PUSH_CONST,
+    OpCode.JMP_IF_FALSE,
+    OpCode.BRANCH_IF,
+    OpCode.JMP,
+}
