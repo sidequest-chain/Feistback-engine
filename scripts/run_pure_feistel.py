@@ -86,6 +86,13 @@ def parse_args() -> argparse.Namespace:
         help="Path to vocab_map.pt for 16k vocab",
     )
     parser.add_argument(
+        "--memory_type",
+        type=str,
+        default=None,
+        choices=["glr", "raf"],
+        help="Memory mechanism ('glr' or 'raf', auto-detected from checkpoint if None)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default=None,
@@ -98,25 +105,11 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
 
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    print("=" * 75)
-    print("PURE FEISTEL LM INFERENCE RUNNER (0 BYTES KV-CACHE)")
-    print("=" * 75)
-    print(f"Device              : {device}")
-    print(f"Checkpoint          : {args.checkpoint}")
-    print(f"Feistel Layers      : {args.num_layers}")
-    print(f"State Dimension     : {args.state_dim}")
-    print(f"Vocab Size          : {args.vocab_size}")
-    print(f"Max New Tokens      : {args.max_new_tokens}")
-    print(f"Temperature         : {args.temperature}")
-    print(f"Top-P               : {args.top_p}")
-    print(f"Repetition Penalty  : {args.repetition_penalty}")
-    print("=" * 75)
-
-    # Detect vocab_size, num_layers, and state_dim from checkpoint if present
+    # Detect vocab_size, num_layers, state_dim, and memory_type from checkpoint if present
     target_vocab_size = args.vocab_size
     target_num_layers = args.num_layers
     target_state_dim = args.state_dim
+    target_memory_type = args.memory_type
     if os.path.exists(args.checkpoint):
         try:
             ckpt_meta = torch.load(args.checkpoint, map_location="cpu")
@@ -127,9 +120,29 @@ def main() -> None:
                     target_num_layers = ckpt_meta["num_layers"]
                 if "state_dim" in ckpt_meta:
                     target_state_dim = ckpt_meta["state_dim"]
-                print(f"[Run] Checkpoint metadata: vocab_size={target_vocab_size}, num_layers={target_num_layers}, state_dim={target_state_dim}")
+                if target_memory_type is None and "memory_type" in ckpt_meta:
+                    target_memory_type = ckpt_meta["memory_type"]
         except Exception:
             pass
+
+    if target_memory_type is None:
+        target_memory_type = "raf" if "raf" in args.checkpoint.lower() else "glr"
+
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    print("=" * 75)
+    print("PURE FEISTEL LM INFERENCE RUNNER (0 BYTES KV-CACHE)")
+    print("=" * 75)
+    print(f"Device              : {device}")
+    print(f"Checkpoint          : {args.checkpoint}")
+    print(f"Feistel Layers      : {target_num_layers}")
+    print(f"Memory Type         : {target_memory_type.upper()}")
+    print(f"State Dimension     : {target_state_dim if target_memory_type == 'glr' else '4x16x16 (Matrix)'}")
+    print(f"Vocab Size          : {target_vocab_size}")
+    print(f"Max New Tokens      : {args.max_new_tokens}")
+    print(f"Temperature         : {args.temperature}")
+    print(f"Top-P               : {args.top_p}")
+    print(f"Repetition Penalty  : {args.repetition_penalty}")
+    print("=" * 75)
 
     # 1. Initialize PureFeistelLM
     print("\n[1/3] Instantiating PureFeistelLM architecture...")
@@ -138,6 +151,7 @@ def main() -> None:
         d_model=896,
         num_layers=target_num_layers,
         state_dim=target_state_dim,
+        memory_type=target_memory_type,
         torch_dtype=torch.bfloat16,
         device=device,
         from_pretrained_qwen=(target_vocab_size != 16384),
@@ -159,22 +173,24 @@ def main() -> None:
         print(f"\n[WARNING] Checkpoint '{args.checkpoint}' not found! Running with initial weights.")
 
     # 3. Autoregressive Generation
+    prompt = args.prompt.replace("\\n", "\n").replace("\\t", "\t")
     print("\n[3/3] Generating code autoregressively (0 bytes KV cache)...")
     print("-" * 75)
     print("PROMPT:")
-    print(args.prompt, end="" if args.prompt.endswith("\n") else "\n")
+    print(prompt, end="" if prompt.endswith("\n") else "\n")
     print("-" * 75)
 
     t0 = time.perf_counter()
     generated_text, token_ids = model.generate(
-        prompt=args.prompt,
+        prompt=prompt,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
         repetition_penalty=args.repetition_penalty,
     )
     elapsed = time.perf_counter() - t0
-    num_gen_tokens = token_ids.shape[-1] - model.tokenizer(args.prompt, return_tensors="pt")["input_ids"].shape[-1]
+    prompt_len = model.tokenizer(prompt, return_tensors="pt")["input_ids"].shape[-1]
+    num_gen_tokens = token_ids.shape[-1] - prompt_len
     tok_per_sec = num_gen_tokens / max(1e-6, elapsed)
 
     print("GENERATED COMPLETION:")

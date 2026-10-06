@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer, Qwen2ForCausalLM
 
 from core.holographic_mixer import functional_holographic_mixer, compute_param_len
+from core.associative_memory import AssociativeMemoryBlock
 
 
 class GatedLinearRecurrence(nn.Module):
@@ -115,8 +116,8 @@ class SpectralMixer(nn.Module):
 
 class FeistelBlock(nn.Module):
     """
-    Feistel round function block combining SpectralMixer and GatedLinearRecurrence:
-        F(x) = SpectralMixer(x) + GLR(x, state)
+    Feistel round function block combining SpectralMixer and Recurrent/Associative memory:
+        F(x) = SpectralMixer(x) + Memory(x, state)
         L_{i+1} = R_i
         R_{i+1} = L_i + layer_scale * F(R_i, state_i)
     """
@@ -128,13 +129,33 @@ class FeistelBlock(nn.Module):
         max_seq_len: int = 512,
         layer_scale: float = 0.05,
         activation: str = "silu",
+        memory_type: str = "glr",
+        num_heads: int = 4,
+        key_dim: int = 16,
+        value_dim: int = 16,
     ) -> None:
         super().__init__()
         self.d_half = d_half
         self.state_dim = state_dim
         self.layer_scale = layer_scale
+        self.memory_type = memory_type
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.value_dim = value_dim
+
         self.spectral_mixer = SpectralMixer(d_half=d_half, max_seq_len=max_seq_len, activation=activation)
-        self.glr = GatedLinearRecurrence(dim=d_half, state_dim=state_dim)
+
+        if memory_type == "raf":
+            self.associative_memory = AssociativeMemoryBlock(
+                d_model=d_half,
+                num_heads=num_heads,
+                key_dim=key_dim,
+                value_dim=value_dim,
+            )
+            self.glr = None
+        else:
+            self.glr = GatedLinearRecurrence(dim=d_half, state_dim=state_dim)
+            self.associative_memory = None
 
     def forward(
         self,
@@ -143,8 +164,11 @@ class FeistelBlock(nn.Module):
         state: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         f_spectral = self.spectral_mixer(R)
-        f_glr, new_state = self.glr(R, state=state)
-        f_total = f_spectral + f_glr
+        if self.memory_type == "raf":
+            f_mem, new_state = self.associative_memory(R, state=state)
+        else:
+            f_mem, new_state = self.glr(R, state=state)
+        f_total = f_spectral + f_mem
 
         L_next = R
         R_next = L + self.layer_scale * f_total
@@ -153,8 +177,8 @@ class FeistelBlock(nn.Module):
 
 class PureFeistelBackbone(nn.Module):
     """
-    Multi-layer Pure Feistel Backbone equipped with O(1) GatedLinearRecurrence states
-    and holographic frequency mixers across all layers.
+    Multi-layer Pure Feistel Backbone equipped with O(1) states
+    (GLR vectors or RAF matrix associative memories) and holographic frequency mixers.
     Zero Transformer layers, exactly 0 bytes KV-cache.
     """
 
@@ -166,6 +190,10 @@ class PureFeistelBackbone(nn.Module):
         max_seq_len: int = 512,
         layer_scale: float = 0.05,
         activation: str = "silu",
+        memory_type: str = "glr",
+        num_heads: int = 4,
+        key_dim: int = 16,
+        value_dim: int = 16,
     ) -> None:
         super().__init__()
         assert d_model % 2 == 0, f"d_model ({d_model}) must be divisible by 2!"
@@ -176,6 +204,10 @@ class PureFeistelBackbone(nn.Module):
         self.max_seq_len = max_seq_len
         self.layer_scale = layer_scale
         self.activation = activation
+        self.memory_type = memory_type
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.value_dim = value_dim
 
         self.layers = nn.ModuleList([
             FeistelBlock(
@@ -184,6 +216,10 @@ class PureFeistelBackbone(nn.Module):
                 max_seq_len=max_seq_len,
                 layer_scale=layer_scale,
                 activation=activation,
+                memory_type=memory_type,
+                num_heads=num_heads,
+                key_dim=key_dim,
+                value_dim=value_dim,
             )
             for _ in range(num_layers)
         ])
@@ -195,7 +231,13 @@ class PureFeistelBackbone(nn.Module):
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         B, L, D = x.shape
         if states is None:
-            states = [torch.zeros(B, self.state_dim, device=x.device, dtype=x.dtype) for _ in range(self.num_layers)]
+            if self.memory_type == "raf":
+                states = [
+                    torch.zeros(B, self.num_heads, self.key_dim, self.value_dim, device=x.device, dtype=x.dtype)
+                    for _ in range(self.num_layers)
+                ]
+            else:
+                states = [torch.zeros(B, self.state_dim, device=x.device, dtype=x.dtype) for _ in range(self.num_layers)]
 
         L_cur, R_cur = torch.chunk(x, 2, dim=-1)
         new_states = []
@@ -224,6 +266,10 @@ class PureFeistelLM(nn.Module):
         state_dim: int = 128,
         max_seq_len: int = 512,
         layer_scale: float = 0.05,
+        memory_type: str = "glr",
+        num_heads: int = 4,
+        key_dim: int = 16,
+        value_dim: int = 16,
         torch_dtype: torch.dtype = torch.bfloat16,
         device: Optional[str] = None,
         from_pretrained_qwen: bool = True,
@@ -245,6 +291,10 @@ class PureFeistelLM(nn.Module):
         self.state_dim = state_dim
         self.max_seq_len = max_seq_len
         self.layer_scale = layer_scale
+        self.memory_type = memory_type
+        self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.value_dim = value_dim
         self.torch_dtype = torch_dtype
         self.old_to_new: Optional[torch.Tensor] = None
         self.new_to_old: Optional[torch.Tensor] = None
@@ -305,13 +355,17 @@ class PureFeistelLM(nn.Module):
             self.old_to_new = vmap["old_to_new"].to(self.device)
             self.new_to_old = vmap["new_to_old"].to(self.device)
 
-        # 2. Feistel Holographic Backbone with GLR (0 bytes KV cache)
+        # 2. Feistel Holographic Backbone with GLR or RAF (0 bytes KV cache)
         self.feistel_backbone = PureFeistelBackbone(
             num_layers=num_layers,
             d_model=d_model,
             state_dim=state_dim,
             max_seq_len=max_seq_len,
             layer_scale=layer_scale,
+            memory_type=memory_type,
+            num_heads=num_heads,
+            key_dim=key_dim,
+            value_dim=value_dim,
         ).to(self.device, dtype=torch_dtype)
 
         # Freeze embeddings, norm, and lm_head by default; core trainable backbone is enabled
@@ -456,11 +510,20 @@ class PureFeistelLM(nn.Module):
 
         L_cur, R_cur = torch.chunk(x, 2, dim=-1)
         B = x.shape[0]
-        glr_states = [torch.zeros(B, self.feistel_backbone.state_dim, device=x.device, dtype=x.dtype) for _ in range(self.num_layers)]
+        if self.memory_type == "raf":
+            mem_states = [
+                torch.zeros(B, self.num_heads, self.key_dim, self.value_dim, device=x.device, dtype=x.dtype)
+                for _ in range(self.num_layers)
+            ]
+        else:
+            mem_states = [
+                torch.zeros(B, self.feistel_backbone.state_dim, device=x.device, dtype=x.dtype)
+                for _ in range(self.num_layers)
+            ]
 
         with torch.no_grad():
             for i, layer in enumerate(self.feistel_backbone.layers):
-                L_cur, R_cur, glr_states[i] = layer(L_cur, R_cur, state=glr_states[i])
+                L_cur, R_cur, mem_states[i] = layer(L_cur, R_cur, state=mem_states[i])
                 states.append(torch.cat([L_cur, R_cur], dim=-1))
 
         return states
@@ -510,11 +573,17 @@ class PureFeistelLM(nn.Module):
             else:
                 suppressed_ids = list(range(151644, 151665))
 
-        # Initialize persistent layer states: list of (B, state_dim) tensors across all layers
-        layer_states = [
-            torch.zeros(B, self.feistel_backbone.state_dim, device=self.device, dtype=self.torch_dtype)
-            for _ in range(self.num_layers)
-        ]
+        # Initialize persistent layer states: list of state tensors across all layers
+        if self.memory_type == "raf":
+            layer_states = [
+                torch.zeros(B, self.num_heads, self.key_dim, self.value_dim, device=self.device, dtype=self.torch_dtype)
+                for _ in range(self.num_layers)
+            ]
+        else:
+            layer_states = [
+                torch.zeros(B, self.feistel_backbone.state_dim, device=self.device, dtype=self.torch_dtype)
+                for _ in range(self.num_layers)
+            ]
 
         # Cache for whitespace / indentation tokens to avoid repeated decoding
         ws_cache: Dict[int, bool] = {}
@@ -649,6 +718,7 @@ class PureFeistelLM(nn.Module):
             "vocab_size": self.vocab_size,
             "d_model": self.d_model,
             "num_layers": self.num_layers,
+            "memory_type": self.memory_type,
             "embed_params": embed_params,
             "norm_params": norm_params,
             "lm_head_params": lm_head_params,
@@ -657,6 +727,6 @@ class PureFeistelLM(nn.Module):
             "total_params": total_params,
             "weight_memory_mb": round(weight_memory_mb, 2),
             "kv_cache_bytes": 0,
-            "state_dim": self.feistel_backbone.state_dim,
+            "state_dim": self.feistel_backbone.state_dim if self.memory_type == "glr" else f"{self.num_heads}x{self.key_dim}x{self.value_dim}",
             "dtype": str(self.torch_dtype),
         }

@@ -84,6 +84,7 @@ class FeistelDistillationTrainer:
         vocab_size: int = 151936,
         vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
         pruned_weights_path: str = "checkpoints/vocab_16k/pruned_weights.pt",
+        memory_type: str = "glr",
         best_ckpt_name: Optional[str] = None,
         data_path: str = "data/train_code.jsonl",
         save_dir: str = "checkpoints",
@@ -95,6 +96,7 @@ class FeistelDistillationTrainer:
         self.teacher_model_name = teacher_model_name
         self.student_layers = student_layers
         self.state_dim = state_dim
+        self.memory_type = memory_type
         self.lr = lr
         self.weight_decay = weight_decay
         self.batch_size = batch_size
@@ -123,7 +125,8 @@ class FeistelDistillationTrainer:
         print(f"Vocab Size           : {self.vocab_size}")
         print(f"Teacher Model        : {self.teacher_model_name if self.vocab_size != 16384 else 'None (Pure CE in 16k space)'}")
         print(f"Student Layers       : {self.student_layers} Feistel layers")
-        print(f"Recurrent State Dim  : {self.state_dim}")
+        print(f"Memory Type          : {self.memory_type.upper()}")
+        print(f"Recurrent State Dim  : {self.state_dim if self.memory_type == 'glr' else '4x16x16 (Matrix)'}")
         print(f"Batch Size / SeqLen  : {self.batch_size} / {self.seq_len} tokens")
         print(f"Learning Rate        : {self.lr} (CosineAnnealingLR eta_min={self.eta_min})")
         print(f"Loss Formulation     : {'1.0 * loss_ce (Pure CE)' if self.vocab_size == 16384 else f'1.0 * loss_ce + 0.3 * loss_kd (T={self.temperature}, Top-{self.kd_top_k})'}")
@@ -173,7 +176,7 @@ class FeistelDistillationTrainer:
 
         # 4. Load Teacher Model (Frozen) & Initialize Student Model (PureFeistelLM)
         if self.vocab_size == 16384:
-            print(f"\n[4/4] Initializing Student model (PureFeistelLM, {self.student_layers} layers, state_dim={self.state_dim}) with 16k pruned vocabulary...")
+            print(f"\n[4/4] Initializing Student model (PureFeistelLM, {self.student_layers} layers, memory_type={self.memory_type}) with 16k pruned vocabulary...")
             self.teacher = None
             self.student = PureFeistelLM(
                 vocab_size=16384,
@@ -182,6 +185,7 @@ class FeistelDistillationTrainer:
                 state_dim=self.state_dim,
                 max_seq_len=max(512, self.seq_len),
                 layer_scale=0.05,
+                memory_type=self.memory_type,
                 torch_dtype=torch.bfloat16,
                 device=str(self.device),
                 from_pretrained_qwen=False,
@@ -190,7 +194,7 @@ class FeistelDistillationTrainer:
                 tokenizer=self.tokenizer,
             )
         else:
-            print(f"\n[4/4] Loading Teacher & initializing Student model (PureFeistelLM, {self.student_layers} layers, state_dim={self.state_dim})...")
+            print(f"\n[4/4] Loading Teacher & initializing Student model (PureFeistelLM, {self.student_layers} layers, memory_type={self.memory_type})...")
             self.teacher = Qwen2ForCausalLM.from_pretrained(
                 self.teacher_model_name,
                 torch_dtype=torch.bfloat16,
@@ -207,6 +211,7 @@ class FeistelDistillationTrainer:
                 state_dim=self.state_dim,
                 max_seq_len=max(512, self.seq_len),
                 layer_scale=0.05,
+                memory_type=self.memory_type,
                 torch_dtype=torch.bfloat16,
                 device=str(self.device),
                 from_pretrained_qwen=False,
@@ -378,7 +383,9 @@ class FeistelDistillationTrainer:
 
             # Track and save best checkpoint based on lowest CE loss
             if self.best_ckpt_name_override is not None:
-                best_ckpt_name = self.best_ckpt_name_override
+                best_ckpt_name = os.path.basename(self.best_ckpt_name_override)
+            elif self.memory_type == "raf":
+                best_ckpt_name = "pure_feistel_best_raf.pt"
             elif self.student_layers == 18 or self.state_dim == 256:
                 best_ckpt_name = "pure_feistel_best_8m.pt"
             elif self.vocab_size == 16384:
@@ -422,7 +429,7 @@ class FeistelDistillationTrainer:
 
             # Periodic checkpoint every 500 steps
             if step % 500 == 0:
-                suffix = "_8m" if (self.student_layers == 18 or self.state_dim == 256) else ("_16k" if self.vocab_size == 16384 else "")
+                suffix = "_raf" if self.memory_type == "raf" else ("_8m" if (self.student_layers == 18 or self.state_dim == 256) else ("_16k" if self.vocab_size == 16384 else ""))
                 ckpt_path = os.path.join(self.save_dir, f"pure_feistel_step_{step}{suffix}.pt")
                 self.save_checkpoint(
                     ckpt_path,
@@ -439,7 +446,9 @@ class FeistelDistillationTrainer:
         mean_tok_sec = sum(history["tokens_per_sec"]) / max(1, len(history["tokens_per_sec"]))
 
         # Save final checkpoint
-        if self.student_layers == 18 or self.state_dim == 256:
+        if self.memory_type == "raf":
+            final_ckpt_name = "pure_feistel_final_raf.pt"
+        elif self.student_layers == 18 or self.state_dim == 256:
             final_ckpt_name = "pure_feistel_final_8m.pt"
         elif self.vocab_size == 16384:
             final_ckpt_name = "pure_feistel_final_16k.pt"
@@ -469,10 +478,11 @@ class FeistelDistillationTrainer:
             f"Final Metrics ({self.steps:<4d}) : Total={final_metrics[0]:.4f} | CE={final_metrics[1]:.4f} | CosSim={final_metrics[2]:.4f}"
         )
         best_ckpt_name = (
-            self.best_ckpt_name_override
+            os.path.basename(self.best_ckpt_name_override)
             if self.best_ckpt_name_override is not None
-            else ("pure_feistel_best_8m.pt" if (self.student_layers == 18 or self.state_dim == 256)
-                  else ("pure_feistel_best_16k.pt" if self.vocab_size == 16384 else "pure_feistel_best.pt"))
+            else ("pure_feistel_best_raf.pt" if self.memory_type == "raf"
+                  else ("pure_feistel_best_8m.pt" if (self.student_layers == 18 or self.state_dim == 256)
+                  else ("pure_feistel_best_16k.pt" if self.vocab_size == 16384 else "pure_feistel_best.pt")))
         )
         best_ckpt_path = os.path.join(self.save_dir, best_ckpt_name)
         if best_metrics is not None:
@@ -514,6 +524,7 @@ class FeistelDistillationTrainer:
             "backbone_state_dict": self.student.backbone.state_dict(),
             "num_layers": self.student_layers,
             "state_dim": self.state_dim,
+            "memory_type": self.memory_type,
             "vocab_size": self.vocab_size,
             "d_model": self.student.d_model,
             "loss_total": loss_total,
@@ -548,6 +559,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--num_layers", "--student_layers", dest="student_layers", type=int, default=12, help="Number of Feistel layers in student")
     parser.add_argument("--state_dim", type=int, default=128, help="State dimension for GatedLinearRecurrence (default: 128)")
+    parser.add_argument("--memory_type", type=str, default="glr", choices=["glr", "raf"], help="Memory mechanism for Feistel branches ('glr' or 'raf')")
     parser.add_argument("--best_ckpt_name", type=str, default=None, help="Custom filename for best checkpoint")
     return parser.parse_args()
 
@@ -571,6 +583,7 @@ if __name__ == "__main__":
         ws_weight=args.ws_weight,
         vocab_size=args.vocab_size,
         vocab_map_path=args.vocab_map,
+        memory_type=args.memory_type,
         best_ckpt_name=args.best_ckpt_name,
         data_path=args.data_path,
         save_dir=args.save_dir,
