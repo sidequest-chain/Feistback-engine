@@ -59,13 +59,31 @@ def parse_args() -> argparse.Namespace:
         "--repetition_penalty",
         type=float,
         default=1.0,
-        help="Repetition penalty multiplier",
+        help="Repetition penalty multiplier (whitespace and indentation tokens exempt)",
     )
     parser.add_argument(
         "--num_layers",
         type=int,
         default=12,
         help="Number of Feistel layers",
+    )
+    parser.add_argument(
+        "--state_dim",
+        type=int,
+        default=128,
+        help="Recurrent state dimension for GatedLinearRecurrence (default: 128)",
+    )
+    parser.add_argument(
+        "--vocab_size",
+        type=int,
+        default=151936,
+        help="Vocabulary size (151936 or 16384)",
+    )
+    parser.add_argument(
+        "--vocab_map",
+        type=str,
+        default="checkpoints/vocab_16k/vocab_map.pt",
+        help="Path to vocab_map.pt for 16k vocab",
     )
     parser.add_argument(
         "--device",
@@ -87,20 +105,44 @@ def main() -> None:
     print(f"Device              : {device}")
     print(f"Checkpoint          : {args.checkpoint}")
     print(f"Feistel Layers      : {args.num_layers}")
+    print(f"State Dimension     : {args.state_dim}")
+    print(f"Vocab Size          : {args.vocab_size}")
     print(f"Max New Tokens      : {args.max_new_tokens}")
     print(f"Temperature         : {args.temperature}")
     print(f"Top-P               : {args.top_p}")
     print(f"Repetition Penalty  : {args.repetition_penalty}")
     print("=" * 75)
 
+    # Detect vocab_size, num_layers, and state_dim from checkpoint if present
+    target_vocab_size = args.vocab_size
+    target_num_layers = args.num_layers
+    target_state_dim = args.state_dim
+    if os.path.exists(args.checkpoint):
+        try:
+            ckpt_meta = torch.load(args.checkpoint, map_location="cpu")
+            if isinstance(ckpt_meta, dict):
+                if "vocab_size" in ckpt_meta:
+                    target_vocab_size = ckpt_meta["vocab_size"]
+                if "num_layers" in ckpt_meta:
+                    target_num_layers = ckpt_meta["num_layers"]
+                if "state_dim" in ckpt_meta:
+                    target_state_dim = ckpt_meta["state_dim"]
+                print(f"[Run] Checkpoint metadata: vocab_size={target_vocab_size}, num_layers={target_num_layers}, state_dim={target_state_dim}")
+        except Exception:
+            pass
+
     # 1. Initialize PureFeistelLM
     print("\n[1/3] Instantiating PureFeistelLM architecture...")
     model = PureFeistelLM(
+        vocab_size=target_vocab_size,
         d_model=896,
-        num_layers=args.num_layers,
+        num_layers=target_num_layers,
+        state_dim=target_state_dim,
         torch_dtype=torch.bfloat16,
         device=device,
-        from_pretrained_qwen=True,
+        from_pretrained_qwen=(target_vocab_size != 16384),
+        pruned_weights_path="checkpoints/vocab_16k/pruned_weights.pt",
+        vocab_map_path=args.vocab_map,
     )
 
     # 2. Load Checkpoint

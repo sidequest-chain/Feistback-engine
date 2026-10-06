@@ -189,9 +189,13 @@ class CodeDistillationDataset(Dataset):
         tokenizer: PreTrainedTokenizerBase,
         seq_len: int = 256,
         min_samples: int = 1500,
+        vocab_size: int = 151936,
+        vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
     ) -> None:
         self.seq_len = seq_len
         self.tokenizer = tokenizer
+        self.vocab_size = vocab_size
+        self.vocab_map_path = vocab_map_path
 
         # If data file does not exist or has fewer samples than required, regenerate
         should_generate = not os.path.exists(data_path)
@@ -220,14 +224,44 @@ class CodeDistillationDataset(Dataset):
         if not code_texts:
             raise ValueError(f"No valid code samples found in {data_path}!")
 
+        # Check for 16k vocabulary mapping
+        use_16k = (vocab_size == 16384)
+        old_to_new: Optional[torch.Tensor] = None
+        if use_16k:
+            if not os.path.exists(vocab_map_path):
+                raise FileNotFoundError(
+                    f"16k vocab map '{vocab_map_path}' not found! Run tools/prune_vocab.py first."
+                )
+            vocab_map_data = torch.load(vocab_map_path, map_location="cpu")
+            old_to_new = vocab_map_data["old_to_new"]
+            raw_eos = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 151643
+            eos_id = old_to_new[raw_eos].item()
+            if eos_id == -1:
+                eos_id = 0
+            print(f"[Dataset] Using 16k vocabulary mapping (EOS 16k ID: {eos_id}).")
+        else:
+            eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+
         # Tokenize and pack into continuous token stream
         all_token_ids: List[int] = []
-        eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
 
         for text in code_texts:
             tokens = tokenizer.encode(text, add_special_tokens=False)
-            all_token_ids.extend(tokens)
+            if use_16k and old_to_new is not None:
+                tokens_mapped = []
+                for tid in tokens:
+                    mapped = old_to_new[tid].item() if tid < len(old_to_new) else -1
+                    if mapped == -1:
+                        # Fallback to eos_id if an unmapped token is encountered
+                        mapped = eos_id
+                    tokens_mapped.append(mapped)
+                all_token_ids.extend(tokens_mapped)
+            else:
+                all_token_ids.extend(tokens)
             all_token_ids.append(eos_id)
+
+        if use_16k:
+            assert all(0 <= tid < 16384 for tid in all_token_ids), "Found token ID out of 16k range [0, 16383]!"
 
         # Slice into chunks of exact length seq_len
         self.chunks: List[torch.Tensor] = []
