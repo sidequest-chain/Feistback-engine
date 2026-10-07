@@ -62,6 +62,18 @@ def parse_args() -> argparse.Namespace:
         help="Repetition penalty multiplier (whitespace and indentation tokens exempt)",
     )
     parser.add_argument(
+        "--no_repeat_ngram_size",
+        type=int,
+        default=3,
+        help="Size of n-grams that cannot be repeated (default: 3, 0 to disable)",
+    )
+    parser.add_argument(
+        "--early_stopping",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable indentation and terminal statement early stopping (default: True)",
+    )
+    parser.add_argument(
         "--num_layers",
         type=int,
         default=12,
@@ -142,6 +154,8 @@ def main() -> None:
     print(f"Temperature         : {args.temperature}")
     print(f"Top-P               : {args.top_p}")
     print(f"Repetition Penalty  : {args.repetition_penalty}")
+    print(f"No Repeat N-Gram    : {args.no_repeat_ngram_size}")
+    print(f"Early Stopping      : {args.early_stopping}")
     print("=" * 75)
 
     # 1. Initialize PureFeistelLM
@@ -173,7 +187,13 @@ def main() -> None:
         print(f"\n[WARNING] Checkpoint '{args.checkpoint}' not found! Running with initial weights.")
 
     # 3. Autoregressive Generation
-    prompt = args.prompt.replace("\\n", "\n").replace("\\t", "\t")
+    prompt_raw = args.prompt.replace("\\n", "\n").replace("\\t", "\t")
+    # Prompt normalization: strip trailing whitespace to ensure clean BPE token alignment
+    prompt_clean = prompt_raw.rstrip()
+    if prompt_clean.endswith(":"):
+        prompt_clean += "\n"
+    prompt = prompt_clean
+
     print("\n[3/3] Generating code autoregressively (0 bytes KV cache)...")
     print("-" * 75)
     print("PROMPT:")
@@ -187,6 +207,8 @@ def main() -> None:
         temperature=args.temperature,
         top_p=args.top_p,
         repetition_penalty=args.repetition_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
+        early_stopping=args.early_stopping,
     )
     elapsed = time.perf_counter() - t0
     prompt_len = model.tokenizer(prompt, return_tensors="pt")["input_ids"].shape[-1]

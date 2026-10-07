@@ -535,6 +535,8 @@ class PureFeistelLM(nn.Module):
         temperature: float = 0.0,
         top_p: float = 1.0,
         repetition_penalty: float = 1.15,
+        no_repeat_ngram_size: int = 3,
+        early_stopping: bool = True,
         suppress_special_tokens: bool = True,
     ) -> Tuple[str, torch.Tensor]:
         """
@@ -544,6 +546,11 @@ class PureFeistelLM(nn.Module):
         if isinstance(prompt, str):
             if self.tokenizer is None:
                 raise ValueError("Tokenizer is required to generate from string prompt!")
+            # Normalize prompt trailing whitespace to ensure clean BPE token alignment
+            prompt_clean = prompt.rstrip()
+            if prompt_clean.endswith(":"):
+                prompt_clean += "\n"
+            prompt = prompt_clean
             encoded = self.tokenizer(prompt, return_tensors="pt")
             prompt_tokens_qwen = encoded["input_ids"].to(self.device)
             if self.vocab_size == 16384 and self.old_to_new is not None:
@@ -612,6 +619,7 @@ class PureFeistelLM(nn.Module):
 
         with torch.no_grad():
             # 1. Prefill prompt to establish initial recurrent states
+            # pyrefly: ignore [bad-unpacking]
             logits, layer_states = self.forward(input_ids, states=layer_states, return_states=True)
             next_token_logits = logits[:, -1, :].clone()
 
@@ -619,6 +627,18 @@ class PureFeistelLM(nn.Module):
                 for fid in suppressed_ids:
                     if fid < next_token_logits.shape[-1]:
                         next_token_logits[:, fid] = -float("inf")
+
+                # N-gram repetition blocking (-inf mask on logits)
+                if no_repeat_ngram_size > 0:
+                    cur_tokens = generated_ids[0].tolist()
+                    n = no_repeat_ngram_size
+                    if len(cur_tokens) >= n - 1:
+                        ngram_prefix = tuple(cur_tokens[-(n - 1):])
+                        for i in range(len(cur_tokens) - (n - 1)):
+                            if tuple(cur_tokens[i : i + n - 1]) == ngram_prefix:
+                                banned_tok = cur_tokens[i + n - 1]
+                                if banned_tok < next_token_logits.shape[-1]:
+                                    next_token_logits[:, banned_tok] = -float("inf")
 
                 if temperature > 0.0:
                     scaled_logits = next_token_logits / temperature
@@ -668,20 +688,65 @@ class PureFeistelLM(nn.Module):
                                 next_token_logits[0, tid] /= repetition_penalty
                     next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
 
+                next_token_id = next_token.item()
+                if next_token_id == eos_id:
+                    break
+
+                # Early stopping check on indentation and terminal statements
+                if early_stopping and isinstance(prompt, str) and self.tokenizer is not None:
+                    candidate_ids = torch.cat([generated_ids, next_token], dim=-1)
+                    new_candidate = candidate_ids[:, input_ids.shape[-1] :]
+                    if self.vocab_size == 16384 and self.new_to_old is not None:
+                        qwen_cand = self.new_to_old[new_candidate]
+                        cand_text = self.tokenizer.decode(qwen_cand[0], skip_special_tokens=True)
+                    else:
+                        cand_text = self.tokenizer.decode(new_candidate[0], skip_special_tokens=True)
+
+                    full_text = prompt + cand_text
+                    lines = full_text.split("\n")
+                    body_started = False
+                    base_indent = 4
+                    stop_now = False
+
+                    for idx, line in enumerate(lines[1:], start=1):
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        indent = len(line) - len(line.lstrip())
+                        if indent > 0:
+                            body_started = True
+
+                        if body_started:
+                            # 1. Stop immediately if indentation drops back to 0 or new def/class begins
+                            if indent == 0 or stripped.startswith("def ") or stripped.startswith("class "):
+                                stop_now = True
+                                break
+
+                            # 2. Stop if return/raise/pass at base indentation is followed by completed newline
+                            if idx < len(lines) - 1 and indent <= base_indent:
+                                if (
+                                    stripped.startswith("return ")
+                                    or stripped == "return"
+                                    or stripped.startswith("raise ")
+                                    or stripped == "pass"
+                                ):
+                                    stop_now = True
+                                    break
+
+                    if stop_now:
+                        break
+
                 generated_ids = torch.cat([generated_ids, next_token], dim=-1)
 
                 # Update running consecutive whitespace counter
-                next_token_id = next_token.item()
                 if is_whitespace_token(next_token_id):
                     consecutive_ws += 1
                 else:
                     consecutive_ws = 0
 
-                if next_token_id == eos_id:
-                    break
-
                 # Autoregressively forward ONLY the new token (L=1) with persistent layer_states
                 # Guarantees strictly O(1) computation and 0 bytes KV-cache
+                # pyrefly: ignore [bad-unpacking]
                 step_logits, layer_states = self.forward(next_token, states=layer_states, return_states=True)
                 next_token_logits = step_logits[:, -1, :].clone()
 
@@ -694,6 +759,39 @@ class PureFeistelLM(nn.Module):
                 generated_text = self.tokenizer.decode(new_token_ids[0], skip_special_tokens=True)
         else:
             generated_text = ""
+
+        # Post-clean: ensure cleanly cut lines if early stopping was requested
+        if early_stopping and isinstance(prompt, str) and generated_text:
+            full_lines = (prompt + generated_text).split("\n")
+            stop_idx = None
+            b_started = False
+            for idx, line in enumerate(full_lines):
+                if idx == 0:
+                    continue
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if indent > 0:
+                    b_started = True
+                if b_started:
+                    if indent == 0 or stripped.startswith("def ") or stripped.startswith("class "):
+                        stop_idx = idx
+                        break
+                    if indent <= 4 and (
+                        stripped.startswith("return ")
+                        or stripped == "return"
+                        or stripped.startswith("raise ")
+                        or stripped == "pass"
+                    ):
+                        if idx < len(full_lines) - 1:
+                            stop_idx = idx + 1
+                            break
+
+            if stop_idx is not None:
+                kept = full_lines[:stop_idx]
+                generated_text = "\n".join(kept)[len(prompt):]
+
         return generated_text, generated_ids
 
     def get_parameter_summary(self) -> Dict[str, Any]:
