@@ -8,10 +8,13 @@ and executes autoregressive code generation without KV-cache.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 from pathlib import Path
+import re
 import sys
 import time
+from typing import Dict, List, Tuple
 
 # Ensure repository root is on sys.path
 REPO_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -21,6 +24,75 @@ if REPO_ROOT not in sys.path:
 import torch
 
 from core.pure_feistel_lm import PureFeistelLM
+
+
+def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
+    """
+    Attempts to parse the function header in the prompt using `ast`.
+    If arguments are identified:
+      - 1 argument: maps to 'x' (unless already in known single pool).
+      - 2 arguments: maps to 'a', 'b'.
+      - 3 arguments: maps to 'u', 'v', 'w'.
+      - More arguments: preserved.
+    Replaces typed argument names with canonical ones (e.g. 'alpha: int' -> 'a: int').
+    Returns the canonicalized prompt and the inverse mapping dictionary (canonical -> original).
+    If parsing fails, returns the original prompt and an empty dict.
+    """
+    inv_map: Dict[str, str] = {}
+    known_single_vars = {"n", "x", "val", "num", "value", "a", "k", "item", "target", "elem"}
+
+    clean_p = prompt.strip()
+    try:
+        tree = ast.parse(clean_p + "\n    pass")
+    except SyntaxError:
+        return prompt, inv_map
+
+    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+        return prompt, inv_map
+
+    fn_node = tree.body[0]
+    args = fn_node.args.args
+    if not args:
+        return prompt, inv_map
+
+    num_args = len(args)
+    if num_args == 1:
+        orig = args[0].arg
+        if orig in known_single_vars:
+            targets = [orig]
+        else:
+            targets = ["x"]
+    elif num_args == 2:
+        targets = ["a", "b"]
+    elif num_args == 3:
+        targets = ["u", "v", "w"]
+    else:
+        targets = [arg.arg for arg in args]
+
+    for arg, target in zip(args, targets):
+        if arg.arg != target:
+            inv_map[target] = arg.arg
+            arg.arg = target
+
+    if not inv_map:
+        return prompt, inv_map
+
+    canonical_header = ast.unparse(fn_node).split("\n")[0]
+    canonical_prompt = canonical_header + "\n" if prompt.endswith("\n") else canonical_header
+
+    return canonical_prompt, inv_map
+
+
+def decanonicalize_code(completion: str, inv_map: Dict[str, str]) -> str:
+    """
+    Replaces canonical variable names in the generated code body back to original prompt variable names.
+    Uses strict word boundaries to avoid partial word replacements.
+    """
+    if not inv_map:
+        return completion
+
+    pattern = re.compile(r"\b(" + "|".join(re.escape(k) for k in inv_map.keys()) + r")\b")
+    return pattern.sub(lambda m: inv_map[m.group(0)], completion)
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +144,12 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Enable indentation and terminal statement early stopping (default: True)",
+    )
+    parser.add_argument(
+        "--canonicalize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable prompt argument canonicalization and output decanonicalization (default: True)",
     )
     parser.add_argument(
         "--num_layers",
@@ -156,6 +234,7 @@ def main() -> None:
     print(f"Repetition Penalty  : {args.repetition_penalty}")
     print(f"No Repeat N-Gram    : {args.no_repeat_ngram_size}")
     print(f"Early Stopping      : {args.early_stopping}")
+    print(f"Canonicalize        : {args.canonicalize}")
     print("=" * 75)
 
     # 1. Initialize PureFeistelLM
@@ -194,15 +273,26 @@ def main() -> None:
         prompt_clean += "\n"
     prompt = prompt_clean
 
+    prompt_to_generate = prompt
+    inv_map: Dict[str, str] = {}
+    if args.canonicalize:
+        canonical_prompt, inv_map = canonicalize_signature(prompt)
+        if inv_map:
+            prompt_to_generate = canonical_prompt
+
     print("\n[3/3] Generating code autoregressively (0 bytes KV cache)...")
     print("-" * 75)
     print("PROMPT:")
     print(prompt, end="" if prompt.endswith("\n") else "\n")
+    if inv_map:
+        print("CANONICAL PROMPT (BPE Adapted):")
+        print(prompt_to_generate, end="" if prompt_to_generate.endswith("\n") else "\n")
+        print(f"VARIABLE MAPPINGS   : {inv_map}")
     print("-" * 75)
 
     t0 = time.perf_counter()
     generated_text, token_ids = model.generate(
-        prompt=prompt,
+        prompt=prompt_to_generate,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
@@ -211,12 +301,17 @@ def main() -> None:
         early_stopping=args.early_stopping,
     )
     elapsed = time.perf_counter() - t0
-    prompt_len = model.tokenizer(prompt, return_tensors="pt")["input_ids"].shape[-1]
+    prompt_len = model.tokenizer(prompt_to_generate, return_tensors="pt")["input_ids"].shape[-1]
     num_gen_tokens = token_ids.shape[-1] - prompt_len
     tok_per_sec = num_gen_tokens / max(1e-6, elapsed)
 
+    if args.canonicalize and inv_map:
+        final_completion = decanonicalize_code(generated_text, inv_map)
+    else:
+        final_completion = generated_text
+
     print("GENERATED COMPLETION:")
-    print(generated_text)
+    print(final_completion)
     print("-" * 75)
     print(f"Generation Latency : {elapsed:.3f} s ({num_gen_tokens} tokens @ {tok_per_sec:.1f} tok/s)")
     print(f"KV-Cache Memory    : 0 bytes (Verified)")
