@@ -1,18 +1,23 @@
 """
 Runner Package
 ==============
-Orchestration layer linking Feistel neural reasoner and MiniStackVM.
+Orchestration and intent dispatching layer linking PureFeistelLM and MiniStackVM.
 """
 
-from runner.tokenizer import HybridTokenizer
-from runner.args_parser import extract_numeric_args
-from runner.pipeline import HybridPipeline
-from .adaptive_loop import AdaptiveFeistelRunner
-from .async_pipeline import AsyncHybridPipeline
-from .agent_loop import AutonomousFeistelAgent
-from .log_task_runner import LogTaskRunner
-from .engine import FeistbackEngine, EngineResult, TestOutcome
-from .dispatcher import BaseDispatcher, ConfigDispatcher
+from runner.engine import FeistbackEngine, EngineResult, TestOutcome
+from runner.dispatcher import BaseDispatcher, ConfigDispatcher
+
+# Optional backward compatibility with archived legacy components
+try:
+    from archive.legacy_runner.tokenizer import HybridTokenizer
+    from archive.legacy_runner.args_parser import extract_numeric_args
+    from archive.legacy_runner.pipeline import HybridPipeline
+    from archive.legacy_runner.adaptive_loop import AdaptiveFeistelRunner
+    from archive.legacy_runner.async_pipeline import AsyncHybridPipeline
+    from archive.legacy_runner.agent_loop import AutonomousFeistelAgent
+    from archive.legacy_runner.log_task_runner import LogTaskRunner
+except ImportError:
+    pass
 
 __all__ = [
     "FeistbackEngine",
@@ -20,13 +25,4 @@ __all__ = [
     "TestOutcome",
     "BaseDispatcher",
     "ConfigDispatcher",
-    "HybridTokenizer",
-    "extract_numeric_args",
-    "HybridPipeline",
-    "AdaptiveFeistelRunner",
-    "AsyncHybridPipeline",
-    "AutonomousFeistelAgent",
-    "LogTaskRunner",
 ]
-
-

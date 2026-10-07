@@ -13,6 +13,10 @@
         "summa",
         "kokku liita",
         "liida kokku",
+        "kokku",
+        "löö kokku",
+        "pane kokku",
+        "viska kokku",
         "pluss",
         "add",
         "plus",
@@ -23,7 +27,10 @@
         "\\bliida\\b",
         "\\bsumma\\b",
         "\\badd\\b",
-        "\\bplus\\b"
+        "\\bplus\\b",
+        "\\blöö\\s+kokku\\b",
+        "\\bpane\\s+kokku\\b",
+        "\\bkokku\\b"
       ],
       "description": "Adds two integers together."
     },

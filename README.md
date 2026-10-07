@@ -46,3 +46,7 @@ Feistback couples an ultra-lightweight 3.8M parameter recurrent model (**PureFei
 ```bash
 .\.venv\Scripts\python.exe tests/test_dispatcher.py
 ```
+
+### Architectural Specifications & RFCs
+- [RFC-2026-FEIST-002: Feistback V2 Architecture](docs/RFC_002_COUNCIL_OF_SPECIALTIES_V2.md) – Dynamic Council of Specialties, `eesti_keele_sl2ng` Micro-Model, and Self-Hydrating Cache.
+- [RAF v2 Breakthrough Report](docs/RAF_V2_BREAKTHROUGH_REPORT.md) – Reversible Associative Feistel matrix memory and zero KV-cache verification.
