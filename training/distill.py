@@ -385,7 +385,7 @@ class FeistelDistillationTrainer:
             if self.best_ckpt_name_override is not None:
                 best_ckpt_name = os.path.basename(self.best_ckpt_name_override)
             elif self.memory_type == "raf":
-                best_ckpt_name = "pure_feistel_best_raf.pt"
+                best_ckpt_name = "pure_feistel_raf_clean.pt" if "clean" in self.data_path else "pure_feistel_best_raf.pt"
             elif self.student_layers == 18 or self.state_dim == 256:
                 best_ckpt_name = "pure_feistel_best_8m.pt"
             elif self.vocab_size == 16384:
@@ -480,7 +480,7 @@ class FeistelDistillationTrainer:
         best_ckpt_name = (
             os.path.basename(self.best_ckpt_name_override)
             if self.best_ckpt_name_override is not None
-            else ("pure_feistel_best_raf.pt" if self.memory_type == "raf"
+            else (("pure_feistel_raf_clean.pt" if "clean" in self.data_path else "pure_feistel_best_raf.pt") if self.memory_type == "raf"
                   else ("pure_feistel_best_8m.pt" if (self.student_layers == 18 or self.state_dim == 256)
                   else ("pure_feistel_best_16k.pt" if self.vocab_size == 16384 else "pure_feistel_best.pt")))
         )
@@ -555,8 +555,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=2.0, help="Distillation temperature T")
     parser.add_argument("--ws_weight", type=float, default=0.05, help="Cross-entropy weight for whitespace tokens")
     parser.add_argument("--vocab_size", type=int, default=151936, help="Vocabulary size (151936 or 16384)")
+    parser.add_argument("--vocab_dir", type=str, default=None, help="Directory containing 16k vocab_map.pt and pruned_weights.pt")
     parser.add_argument("--vocab_map", type=str, default="checkpoints/vocab_16k/vocab_map.pt", help="Path to vocab_map.pt")
-    parser.add_argument("--save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--save_dir", "--checkpoint_dir", dest="save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--pure_ce", action="store_true", help="Force pure cross-entropy training with 16k vocabulary")
     parser.add_argument("--num_layers", "--student_layers", dest="student_layers", type=int, default=12, help="Number of Feistel layers in student")
     parser.add_argument("--state_dim", type=int, default=128, help="State dimension for GatedLinearRecurrence (default: 128)")
     parser.add_argument("--memory_type", type=str, default="glr", choices=["glr", "raf"], help="Memory mechanism for Feistel branches ('glr' or 'raf')")
@@ -567,6 +569,18 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
+
+    vocab_map = args.vocab_map
+    pruned_weights = "checkpoints/vocab_16k/pruned_weights.pt"
+    vocab_size = args.vocab_size
+
+    if args.vocab_dir is not None:
+        vocab_map = os.path.join(args.vocab_dir, "vocab_map.pt")
+        pruned_weights = os.path.join(args.vocab_dir, "pruned_weights.pt")
+        vocab_size = 16384
+
+    if args.pure_ce:
+        vocab_size = 16384
 
     trainer = FeistelDistillationTrainer(
         teacher_model_name="Qwen/Qwen2.5-Coder-0.5B",
@@ -581,8 +595,9 @@ if __name__ == "__main__":
         eta_min=args.eta_min,
         temperature=args.temperature,
         ws_weight=args.ws_weight,
-        vocab_size=args.vocab_size,
-        vocab_map_path=args.vocab_map,
+        vocab_size=vocab_size,
+        vocab_map_path=vocab_map,
+        pruned_weights_path=pruned_weights,
         memory_type=args.memory_type,
         best_ckpt_name=args.best_ckpt_name,
         data_path=args.data_path,

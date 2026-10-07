@@ -1,0 +1,203 @@
+{
+  "version": "1.0",
+  "description": "Feistback Intent Dispatcher Configuration for Natural Language and Estengrish Routing",
+  "intents": [
+    {
+      "id": "add",
+      "name": "Binary Addition",
+      "signature_template": "def add(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": [
+        "liida",
+        "liitmine",
+        "summa",
+        "kokku liita",
+        "liida kokku",
+        "pluss",
+        "add",
+        "plus",
+        "sum"
+      ],
+      "regex_patterns": [
+        "liida.*kokku",
+        "\\bliida\\b",
+        "\\bsumma\\b",
+        "\\badd\\b",
+        "\\bplus\\b"
+      ],
+      "description": "Adds two integers together."
+    },
+    {
+      "id": "clamp_math",
+      "name": "Mathematical Clamping",
+      "signature_template": "def clamp_range_1(u: int, v: int, w: int) -> int:",
+      "expected_args_count": 3,
+      "keywords": [
+        "clämbi",
+        "clambi",
+        "klembi",
+        "clamp",
+        "suru vahele",
+        "piira",
+        "vahemikku",
+        "piirang",
+        "vahemik"
+      ],
+      "regex_patterns": [
+        "\\bcl[aä]mbi\\b",
+        "\\bklembi\\b",
+        "\\bclamp\\b",
+        "suru.*vahele",
+        "piira.*vahemikku"
+      ],
+      "description": "Clamps an input integer value between lower and upper bounds using min(max(u, v), w)."
+    },
+    {
+      "id": "calc_with_locals",
+      "name": "Squared Difference with Locals",
+      "signature_template": "def calc_with_locals(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": [
+        "vahe ruut",
+        "diff ruut",
+        "liida üks",
+        "calc locals",
+        "vahe ruutu",
+        "ruut vahe",
+        "arvuta vahe ruut",
+        "liida üks otsa"
+      ],
+      "regex_patterns": [
+        "vahe.*ruut.*liida.*üks",
+        "diff.*ruut",
+        "calc.*locals",
+        "vahe.*ruut"
+      ],
+      "description": "Computes the squared difference of two numbers and adds one using local variables."
+    },
+    {
+      "id": "bitwise_comb",
+      "name": "Bitwise XOR Combination",
+      "signature_template": "def bitwise_xor_mask_1(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": [
+        "xor",
+        "xori",
+        "viska xor",
+        "välistav või",
+        "valistav voi",
+        "bitwise xor",
+        "bitikombinatsioon",
+        "tee xor"
+      ],
+      "regex_patterns": [
+        "\\bxor\\b",
+        "\\bxori\\b",
+        "viska.*xor",
+        "v[aä]listav.*v[oõ]i"
+      ],
+      "description": "Performs bitwise XOR combination between two integers."
+    },
+    {
+      "id": "is_negative",
+      "name": "Negative Number Check",
+      "signature_template": "def is_negative(val: int) -> bool:",
+      "expected_args_count": 1,
+      "keywords": [
+        "negatiivne",
+        "on negatiivne",
+        "kas negatiivne",
+        "alla nulli",
+        "väiksem kui null",
+        "is negative",
+        "negative"
+      ],
+      "regex_patterns": [
+        "on.*negatiivne",
+        "kas.*negatiivne",
+        "\\bnegatiivne\\b",
+        "\\bnegative\\b"
+      ],
+      "description": "Checks if a given integer is negative (< 0)."
+    },
+    {
+      "id": "is_even",
+      "name": "Even Number Parity Check",
+      "signature_template": "def is_even(counter_val: int) -> bool:",
+      "expected_args_count": 1,
+      "keywords": [
+        "paaris",
+        "on paaris",
+        "kas paaris",
+        "paarisarv",
+        "is even",
+        "even"
+      ],
+      "regex_patterns": [
+        "on.*paaris",
+        "kas.*paaris",
+        "\\bpaaris\\b",
+        "\\beven\\b"
+      ],
+      "description": "Checks if an integer is even."
+    },
+    {
+      "id": "shift_and_mask",
+      "name": "Bitwise Shift and Mask",
+      "signature_template": "def shift_and_mask(u: int, v: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": [
+        "shifti",
+        "nihuta ja maskeeri",
+        "shift and mask",
+        "nihuta",
+        "maskeeri",
+        "shifteeri"
+      ],
+      "regex_patterns": [
+        "\\bshifti\\b",
+        "\\bshifteeri\\b",
+        "nihuta.*mask",
+        "shift.*mask"
+      ],
+      "description": "Shifts an integer by 2 bits and applies bitwise mask with second integer."
+    },
+    {
+      "id": "abs_diff_pow",
+      "name": "Absolute Difference Power",
+      "signature_template": "def abs_diff_pow(p: int, q: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": [
+        "absoluutne vahe ruutu",
+        "abs diff pow",
+        "vahe absoluutväärtuse ruut",
+        "abs ruut",
+        "absoluutne vahe"
+      ],
+      "regex_patterns": [
+        "abs.*diff.*pow",
+        "absoluut.*vahe.*ruut",
+        "vahe.*absoluut"
+      ],
+      "description": "Calculates the square of the absolute difference between two numbers."
+    },
+    {
+      "id": "multiply_three",
+      "name": "Triple Multiplication",
+      "signature_template": "def multiply_three(first: int, second: int, third: int) -> int:",
+      "expected_args_count": 3,
+      "keywords": [
+        "korruta kolm",
+        "kolme korrutis",
+        "multiply three",
+        "korruta kokku kolm"
+      ],
+      "regex_patterns": [
+        "korruta.*kolm",
+        "kolme.*korrutis",
+        "multiply.*three"
+      ],
+      "description": "Multiplies three integers together."
+    }
+  ]
+}

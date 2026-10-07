@@ -182,8 +182,8 @@ def generate_orthogonal_dataset() -> List[str]:
         ("calc_with_locals", lambda u, v: (
             f"def calc_with_locals({u}: int, {v}: int) -> int:\n"
             f"    diff = {u} - {v}\n"
-            f"    sq = diff * diff\n"
-            f"    return sq + 1"
+            f"    term = diff * diff\n"
+            f"    return term + 1"
         )),
         ("bitwise_combine_locals", lambda u, v: (
             f"def bitwise_combine_locals({u}: int, {v}: int) -> int:\n"
@@ -205,9 +205,9 @@ def generate_orthogonal_dataset() -> List[str]:
         )),
         ("average_squares", lambda u, v: (
             f"def average_squares({u}: int, {v}: int) -> int:\n"
-            f"    sq1 = {u} * {u}\n"
-            f"    sq2 = {v} * {v}\n"
-            f"    return (sq1 + sq2) // 2"
+            f"    d1 = {u} * {u}\n"
+            f"    d2 = {v} * {v}\n"
+            f"    return (d1 + d2) // 2"
         )),
         ("abs_diff_pow", lambda u, v: (
             f"def abs_diff_pow({u}: int, {v}: int) -> int:\n"
@@ -223,8 +223,8 @@ def generate_orthogonal_dataset() -> List[str]:
         )),
         ("pythagoras_approx", lambda u, v: (
             f"def pythagoras_approx({u}: int, {v}: int) -> int:\n"
-            f"    sum_sq = {u} * {u} + {v} * {v}\n"
-            f"    res = math.isqrt(sum_sq)\n"
+            f"    total = {u} * {u} + {v} * {v}\n"
+            f"    res = math.isqrt(total)\n"
             f"    return res"
         )),
         ("min_max_delta", lambda u, v: (
@@ -248,9 +248,9 @@ def generate_orthogonal_dataset() -> List[str]:
     multiline_single_templates = [
         ("cube_plus_square", lambda v: (
             f"def cube_plus_square({v}: int) -> int:\n"
-            f"    sq = {v} * {v}\n"
-            f"    cb = sq * {v}\n"
-            f"    return cb + sq"
+            f"    term = {v} * {v}\n"
+            f"    res = term * {v}\n"
+            f"    return res + term"
         )),
         ("isqrt_step", lambda v: (
             f"def isqrt_step({v}: int) -> int:\n"
@@ -292,15 +292,15 @@ def generate_orthogonal_dataset() -> List[str]:
         ("in_range", lambda u, v, w: f"def in_range({u}: int, {v}: int, {w}: int) -> bool:\n    return {v} <= {u} <= {w}"),
         ("clamp_with_locals", lambda u, v, w: (
             f"def clamp_with_locals({u}: int, {v}: int, {w}: int) -> int:\n"
-            f"    temp = max({u}, {v})\n"
-            f"    res = min(temp, {w})\n"
+            f"    val = max({u}, {v})\n"
+            f"    res = min(val, {w})\n"
             f"    return res"
         )),
         ("poly_eval", lambda u, v, w: (
             f"def poly_eval({u}: int, {v}: int, {w}: int) -> int:\n"
-            f"    sq = {u} * {u}\n"
-            f"    term = {v} * sq\n"
-            f"    return term + {w}"
+            f"    term = {u} * {u}\n"
+            f"    res = {v} * term\n"
+            f"    return res + {w}"
         )),
         ("linear_blend", lambda u, v, w: (
             f"def linear_blend({u}: int, {v}: int, {w}: int) -> int:\n"
@@ -356,7 +356,7 @@ def generate_orthogonal_dataset() -> List[str]:
     # =========================================================================
     collection_single_templates = [
         ("list_sum", lambda c: f"def list_sum({c}: list[int]) -> int:\n    total = 0\n    for x in {c}:\n        total += x\n    return total"),
-        ("list_product", lambda c: f"def list_product({c}: list[int]) -> int:\n    prod = 1\n    for x in {c}:\n        prod *= x\n    return prod"),
+        ("list_product", lambda c: f"def list_product({c}: list[int]) -> int:\n    total = 1\n    for x in {c}:\n        total *= x\n    return total"),
         ("find_max", lambda c: f"def find_max({c}: list[float]) -> float:\n    if not {c}:\n        return 0.0\n    m = {c}[0]\n    for x in {c}[1:]:\n        if x > m:\n            m = x\n    return m"),
         ("find_min", lambda c: f"def find_min({c}: list[float]) -> float:\n    if not {c}:\n        return 0.0\n    m = {c}[0]\n    for x in {c}[1:]:\n        if x < m:\n            m = x\n    return m"),
         ("average", lambda c: f"def average({c}: list[float]) -> float:\n    if not {c}:\n        return 0.0\n    return sum({c}) / len({c})"),
@@ -484,9 +484,9 @@ def generate_orthogonal_dataset() -> List[str]:
         funcs.append(f"def clamp_range_{idx}({v_t1}: int, {v_t2}: int, {v_t3}: int) -> int:\n    return min(max({v_t1}, {v_t2}), {v_t3})")
         funcs.append(
             f"def poly_locals_{idx}({v_t1}: int, {v_t2}: int, {v_t3}: int) -> int:\n"
-            f"    sq = {v_t1} * {v_t1}\n"
-            f"    term = sq * {v_t2}\n"
-            f"    return term + {v_t3}"
+            f"    term = {v_t1} * {v_t1}\n"
+            f"    res = term * {v_t2}\n"
+            f"    return res + {v_t3}"
         )
 
         # Collection var round-robin

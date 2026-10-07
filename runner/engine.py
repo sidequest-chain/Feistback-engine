@@ -152,10 +152,43 @@ class FeistbackEngine:
 
         # 5. AST -> Bytecode Compilation
         t0_comp = time.perf_counter()
-        bytecode = self.compiler.compile(full_code)
+        compilation_error = None
+        try:
+            bytecode = self.compiler.compile(full_code)
+            disassembly = self.vm.disassemble(bytecode)
+            arg_names = self.compiler.arg_names
+        except Exception as e:
+            bytecode = []
+            disassembly = f"Compilation Error: {e}"
+            arg_names = []
+            compilation_error = str(e)
         t_comp_ms = (time.perf_counter() - t0_comp) * 1000.0
-        disassembly = self.vm.disassemble(bytecode)
-        arg_names = self.compiler.arg_names
+
+        if compilation_error is not None:
+            return EngineResult(
+                prompt=prompt_clean.strip(),
+                canonical_prompt=canonical_prompt.strip(),
+                inv_map=inv_map,
+                generated_raw=gen_raw,
+                code=full_code,
+                bytecode=[],
+                disassembly=disassembly,
+                test_outcomes=[
+                    TestOutcome(
+                        inputs=test_inputs or [],
+                        vm_result=None,
+                        py_result=None,
+                        matched=False,
+                        latency_us=0.0,
+                        error=compilation_error,
+                    )
+                ],
+                latency_gen_s=t_gen_s,
+                latency_comp_ms=t_comp_ms,
+                latency_vm_avg_us=0.0,
+                verified=False,
+                arg_names=[],
+            )
 
         # 6. Resolve / Auto-generate test inputs
         cases = self._resolve_test_inputs(test_inputs, arg_names)

@@ -10,3 +10,39 @@ Architecture, components, and interfaces are subject to change without notice.
 ## License
 
 Licensed under the European Union Public Licence (EUPL-1.2). See `LICENSE` for details.
+
+## Architecture: Neuro-Symbolic Feistback Stack
+
+Feistback couples an ultra-lightweight 3.8M parameter recurrent model (**PureFeistelLM** with **Reversible Associative Feistel (RAF)** memory, 0 bytes KV-cache) with a deterministic, zero-dependency stack virtual machine (**MiniStackVM**).
+
+```
+[User Query (Estonian / Estengrish)]
+               │
+               ▼
+   BaseDispatcher / ConfigDispatcher  ──▶  config/intents.json
+               │
+     (Formal Function Signature)
+               │
+               ▼
+        FeistbackEngine               ──▶  runner/engine.py
+               │
+         (Python AST)
+               │
+               ▼
+          ASTCompiler                 ──▶  mini_vm/compiler.py
+               │
+       (Compact Bytecode)
+               │
+               ▼
+          MiniStackVM                 ──▶  mini_vm/vm.py (sub-50µs execution)
+```
+
+### Natural Language Intent Dispatcher (`runner/dispatcher.py`)
+- **`BaseDispatcher`**: Abstract interface decoupling query routing from language modeling.
+- **`ConfigDispatcher`**: Declarative router matching user queries against `config/intents.json` using weighted regex and keyword scoring.
+- **Microsecond Determinism**: Generates code with PureFeistelLM and runs execution on MiniStackVM with 100% mathematical parity.
+
+### Running Verification Tests
+```bash
+.\.venv\Scripts\python.exe tests/test_dispatcher.py
+```

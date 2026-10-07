@@ -331,3 +331,151 @@ def is_negative(measurement_value: int) -> bool:
    - Expand the clean synthetic generator from 2,000 to 20,000 samples covering control flow (loops, recursion, list comprehensions).
    - Scale RAF hidden state dimension $d_{\text{model}}$ from 896 to 1536 (7M-14M parameter class) for multi-line algorithmic synthesis.
    - Deploy native C++/CUDA recurrent kernels for the bilinear retrieval step to achieve sub-millisecond end-to-end latency on edge devices.
+
+---
+
+## 8. Neuro-Symbolic Dispatcher Layer: "Council of Specialties" & Natural Language Routing
+
+### 8.1 Architectural Rationale: The "Council of Specialties"
+In production systems, forcing a single monolithic language model to simultaneously parse free-form human colloquialisms (such as informal Estonian and "Estengrish"), manage conversational context, extract positional/named arguments, and emit precise mathematical code creates unnecessary latency, high hallucination rates, and parameter bloat.
+
+The **Council of Specialties** architecture solves this by establishing a decoupled, layered pipeline:
+```
+[User Natural Language / Estengrish Query]
+                  │
+                  ▼
+┌────────────────────────────────────────────────────────┐
+│  Interchangeable Dispatcher Layer (BaseDispatcher)     │
+│  - ConfigDispatcher (config/intents.json)              │
+│  - Regex & Keyword Weighted Intent Scoring             │
+│  - Robust Integer Extraction (Signed Decimals & Hex)   │
+└────────────────────────────────────────────────────────┘
+                  │
+        (Matched Signature & Arguments)
+                  │
+                  ▼
+┌────────────────────────────────────────────────────────┐
+│  FeistbackEngine (runner/engine.py)                    │
+│  - Canonical Signature Normalization (OOD Invariance)  │
+│  - 3.8M PureFeistelLM Generation (0 bytes KV Cache)    │
+│  - Decanonicalization to Target Variable Bindings      │
+└────────────────────────────────────────────────────────┘
+                  │
+         (Decanonicalized Python AST)
+                  │
+                  ▼
+┌────────────────────────────────────────────────────────┐
+│  AST Compiler (mini_vm/compiler.py)                    │
+│  - Validates Syntax & Transforms AST -> Bytecode       │
+└────────────────────────────────────────────────────────┘
+                  │
+          (Compact Bytecode)
+                  │
+                  ▼
+┌────────────────────────────────────────────────────────┐
+│  MiniStackVM (mini_vm/vm.py)                           │
+│  - Deterministic Zero-Dependency Virtual Machine       │
+│  - Gas Limit / Infinite Loop Protection               │
+│  - Sub-50 µs Verified Execution                       │
+└────────────────────────────────────────────────────────┘
+                  │
+                  ▼
+[Verified Execution Result + Microsecond Telemetry]
+```
+
+### 8.2 The Interchangeable Dispatcher Interface (`runner/dispatcher.py`)
+
+The dispatcher layer is designed around an abstract base contract, allowing drop-in replacement of routing mechanisms (e.g., config-driven regex, embedding similarity, fast text classifiers, or small quantized intent routers):
+
+1. **`BaseDispatcher` (Abstract Base Class):**
+   ```python
+   class BaseDispatcher(ABC):
+       @abstractmethod
+       def dispatch(self, user_query: str) -> Dict[str, Any]:
+           """
+           Parses a user query, identifies intent and arguments, and executes
+           the corresponding neuro-symbolic generation and VM verification.
+           """
+           pass
+   ```
+
+2. **`ConfigDispatcher` Implementation:**
+   - **`extract_numbers(text: str) -> List[int]`:** Robust regex extractor supporting negative integers (`-7`), positive integers (`105`), and hexadecimal representations (`0x1F`).
+   - **`match_intent(text: str) -> Tuple[Optional[Dict], float]`:** Multi-tier scoring evaluating regex pattern hits (+10.0 pts) and keyword/phrase presence (+2.0 to +3.0 pts).
+   - **Argument Validation:** Enforces `expected_args_count` against extracted parameters, returning descriptive errors before invocation if parameters are missing.
+   - **`dispatch(user_query: str) -> Dict[str, Any]`:** Executes end-to-end routing, parameter passing, `FeistbackEngine` neural code synthesis, AST compilation, and `MiniStackVM` execution.
+
+### 8.3 Declarative Configuration Schema (`config/intents.json`)
+
+The intent configuration externalizes all natural language mappings into an extensible JSON manifest:
+```json
+{
+  "version": "1.0",
+  "description": "Feistback Intent Dispatcher Configuration for Natural Language and Estengrish Routing",
+  "intents": [
+    {
+      "id": "add",
+      "name": "Binary Addition",
+      "signature_template": "def add(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": ["liida", "summa", "kokku liita", "liida kokku", "pluss", "add"],
+      "regex_patterns": ["liida.*kokku", "\\bliida\\b", "\\bsumma\\b"],
+      "description": "Adds two integers together."
+    },
+    {
+      "id": "clamp_math",
+      "name": "Mathematical Clamping",
+      "signature_template": "def clamp_range_1(u: int, v: int, w: int) -> int:",
+      "expected_args_count": 3,
+      "keywords": ["clämbi", "clambi", "klembi", "clamp", "suru vahele", "piira", "vahemikku"],
+      "regex_patterns": ["\\bcl[aä]mbi\\b", "\\bklembi\\b", "suru.*vahele", "piira.*vahemikku"],
+      "description": "Clamps an input integer value between lower and upper bounds using min(max(u, v), w)."
+    },
+    {
+      "id": "calc_with_locals",
+      "name": "Squared Difference with Locals",
+      "signature_template": "def calc_with_locals(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": ["vahe ruut", "diff ruut", "liida üks", "calc locals", "arvuta vahe ruut"],
+      "regex_patterns": ["vahe.*ruut.*liida.*üks", "diff.*ruut", "calc.*locals"],
+      "description": "Computes the squared difference of two numbers and adds one using local variables."
+    },
+    {
+      "id": "bitwise_comb",
+      "name": "Bitwise XOR Combination",
+      "signature_template": "def bitwise_xor_mask_1(a: int, b: int) -> int:",
+      "expected_args_count": 2,
+      "keywords": ["xor", "xori", "viska xor", "välistav või", "bitwise xor"],
+      "regex_patterns": ["\\bxor\\b", "\\bxori\\b", "viska.*xor"],
+      "description": "Performs bitwise XOR combination between two integers."
+    },
+    {
+      "id": "is_negative",
+      "name": "Negative Number Check",
+      "signature_template": "def is_negative(val: int) -> bool:",
+      "expected_args_count": 1,
+      "keywords": ["negatiivne", "on negatiivne", "kas negatiivne", "alla nulli"],
+      "regex_patterns": ["on.*negatiivne", "kas.*negatiivne", "\\bnegatiivne\\b"],
+      "description": "Checks if a given integer is negative (< 0)."
+    }
+  ]
+}
+```
+
+### 8.4 Verification Results (`tests/test_dispatcher.py`)
+
+All 5 core Estonian and "Estengrish" test queries were executed against the live 3.8M PureFeistelLM RAF model and MiniStackVM, demonstrating 100% mathematical parity:
+
+| Test ID | Natural Language Query | Matched Intent | Extracted Arguments | Generated Code | VM Result | VM Latency | Status |
+| :---: | :--- | :--- | :---: | :--- | :---: | :---: | :---: |
+| **1** | `"liida kokku 15 ja 25"` | `add` | `[15, 25]` | `return a + b` | **`40`** | `37.60 µs` | **PASS** |
+| **2** | `"clämbi see counter 105 vahemikku 0 ja 100"` | `clamp_math` | `[105, 0, 100]` | `return min(max(u, v), w)` | **`100`** | `14.30 µs` | **PASS** |
+| **3** | `"arvuta vahe ruut arvudel 15 ja 8 ja liida üks otsa"` | `calc_with_locals` | `[15, 8]` | `diff = a - b`<br>`term = diff * diff`<br>`return term + 1` | **`50`** | `26.60 µs` | **PASS** |
+| **4** | `"viska xor 12 ja 4 vahel"` | `bitwise_comb` | `[12, 4]` | `return a ^ b` | **`8`** | `6.90 µs` | **PASS** |
+| **5** | `"kas number -7 on negatiivne"` | `is_negative` | `[-7]` | `return val < 0` | **`1`** (True) | `12.90 µs` | **PASS** |
+
+**Summary Findings:**
+1. **Mathematical Integrity:** Deterministic MiniStackVM execution produces exact results identical to the formal Python reference (`matched = True`).
+2. **Deterministic VM Latency:** Execution on the stack VM averages **19.66 µs**, providing instantaneous, zero-overhead computation once the bytecode is loaded.
+3. **Robust Natural Language Parsing:** Mixed Estonian and colloquial English terminology ("clämbi", "xor", "counter", "vahe ruut") are matched with zero ambiguity and correctly routed to specialized function signatures.
+

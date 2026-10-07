@@ -12,11 +12,14 @@ from .async_pipeline import AsyncHybridPipeline
 from .agent_loop import AutonomousFeistelAgent
 from .log_task_runner import LogTaskRunner
 from .engine import FeistbackEngine, EngineResult, TestOutcome
+from .dispatcher import BaseDispatcher, ConfigDispatcher
 
 __all__ = [
     "FeistbackEngine",
     "EngineResult",
     "TestOutcome",
+    "BaseDispatcher",
+    "ConfigDispatcher",
     "HybridTokenizer",
     "extract_numeric_args",
     "HybridPipeline",
