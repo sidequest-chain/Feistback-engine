@@ -1,9 +1,10 @@
 """
-Build Clean Algorithmic Python Dataset (Orthogonal Variable Distribution)
-=========================================================================
-Generates 2000 pure, syntactically verified algorithmic Python functions with:
+Build Clean Algorithmic Python Dataset v3 (Smart VM & Local Variables)
+======================================================================
+Generates ~2700 pure, syntactically verified algorithmic Python functions with:
   - ZERO docstrings
   - Desynchronized, orthogonal variable naming across all function categories
+  - Smart VM features: bitwise ops, scientific math (abs/min/max/isqrt/pow), multi-line locals
   - Strict variable binding (header arguments strictly match body variables)
   - Max frequency for any argument <= 15%
   - Zero 'self', 'cls', 'class', or framework/library internals
@@ -24,7 +25,7 @@ random.seed(42)
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "train_code_clean.jsonl"
 
-# Required variable pools from user specification
+# Core orthogonal variable pools
 SINGLE_VARS = ["n", "x", "val", "num", "value", "a", "k", "item", "target", "elem"]
 BINARY_VARS = [
     ("a", "b"),
@@ -74,10 +75,12 @@ def validate_code(code: str) -> bool:
 
 
 def generate_orthogonal_dataset() -> List[str]:
-    """Generates 2000 functions with orthogonal, balanced variable naming."""
+    """Generates pure algorithmic functions with orthogonal, balanced variable naming."""
     funcs: List[str] = []
 
-    # 1. Binary arithmetic & comparisons (rotated over all BINARY_VARS)
+    # =========================================================================
+    # 1. Binary arithmetic, comparisons, and basic math
+    # =========================================================================
     binary_templates = [
         ("add", lambda u, v: f"def add({u}: int, {v}: int) -> int:\n    return {u} + {v}"),
         ("subtract", lambda u, v: f"def subtract({u}: int, {v}: int) -> int:\n    return {u} - {v}"),
@@ -103,7 +106,179 @@ def generate_orthogonal_dataset() -> List[str]:
         for u, v in BINARY_VARS:
             funcs.append(templ(u, v))
 
-    # 2. Triple variable operations (rotated over all TRIPLE_VARS)
+    # =========================================================================
+    # 2. Bitwise operations (Binary and Single)
+    # =========================================================================
+    bitwise_binary_templates = [
+        ("bitwise_and", lambda u, v: f"def bitwise_and({u}: int, {v}: int) -> int:\n    return {u} & {v}"),
+        ("bitwise_or", lambda u, v: f"def bitwise_or({u}: int, {v}: int) -> int:\n    return {u} | {v}"),
+        ("bitwise_xor", lambda u, v: f"def bitwise_xor({u}: int, {v}: int) -> int:\n    return {u} ^ {v}"),
+        ("shift_left", lambda u, v: f"def shift_left({u}: int, {v}: int) -> int:\n    return {u} << ({v} & 15)"),
+        ("shift_right", lambda u, v: f"def shift_right({u}: int, {v}: int) -> int:\n    return {u} >> ({v} & 15)"),
+        ("bitwise_and_not", lambda u, v: f"def bitwise_and_not({u}: int, {v}: int) -> int:\n    return {u} & (~{v})"),
+        ("bitwise_or_not", lambda u, v: f"def bitwise_or_not({u}: int, {v}: int) -> int:\n    return {u} | (~{v})"),
+        ("bitwise_comb", lambda u, v: f"def bitwise_comb({u}: int, {v}: int) -> int:\n    return ({u} & {v}) | ({u} ^ {v})"),
+        ("bitwise_diff", lambda u, v: f"def bitwise_diff({u}: int, {v}: int) -> int:\n    return ({u} | {v}) - ({u} & {v})"),
+        ("bitwise_half_add", lambda u, v: f"def bitwise_half_add({u}: int, {v}: int) -> int:\n    return ({u} ^ {v}) + (({u} & {v}) << 1)"),
+    ]
+
+    for name, templ in bitwise_binary_templates:
+        for u, v in BINARY_VARS:
+            funcs.append(templ(u, v))
+
+    bitwise_single_templates = [
+        ("bitwise_not", lambda v: f"def bitwise_not({v}: int) -> int:\n    return ~{v}"),
+        ("clear_lowest_bit", lambda v: f"def clear_lowest_bit({v}: int) -> int:\n    return {v} & ({v} - 1)"),
+        ("isolate_lowest_bit", lambda v: f"def isolate_lowest_bit({v}: int) -> int:\n    return {v} & (-{v})"),
+        ("shift_left_1", lambda v: f"def shift_left_1({v}: int) -> int:\n    return {v} << 1"),
+        ("shift_left_2", lambda v: f"def shift_left_2({v}: int) -> int:\n    return {v} << 2"),
+        ("shift_right_1", lambda v: f"def shift_right_1({v}: int) -> int:\n    return {v} >> 1"),
+        ("shift_right_2", lambda v: f"def shift_right_2({v}: int) -> int:\n    return {v} >> 2"),
+        ("mask_low_byte", lambda v: f"def mask_low_byte({v}: int) -> int:\n    return {v} & 255"),
+        ("mask_low_nibble", lambda v: f"def mask_low_nibble({v}: int) -> int:\n    return {v} & 15"),
+        ("toggle_low_byte", lambda v: f"def toggle_low_byte({v}: int) -> int:\n    return {v} ^ 255"),
+    ]
+
+    for name, templ in bitwise_single_templates:
+        for v in SINGLE_VARS:
+            funcs.append(templ(v))
+
+    # =========================================================================
+    # 3. Scientific Math operations (abs, min, max, isqrt, pow)
+    # =========================================================================
+    math_binary_templates = [
+        ("min_built_in", lambda u, v: f"def min_built_in({u}: int, {v}: int) -> int:\n    return min({u}, {v})"),
+        ("max_built_in", lambda u, v: f"def max_built_in({u}: int, {v}: int) -> int:\n    return max({u}, {v})"),
+        ("sum_min_max", lambda u, v: f"def sum_min_max({u}: int, {v}: int) -> int:\n    return min({u}, {v}) + max({u}, {v})"),
+        ("diff_min_max", lambda u, v: f"def diff_min_max({u}: int, {v}: int) -> int:\n    return max({u}, {v}) - min({u}, {v})"),
+        ("manhattan_dist", lambda u, v: f"def manhattan_dist({u}: int, {v}: int) -> int:\n    return abs({u}) + abs({v})"),
+        ("isqrt_sum", lambda u, v: f"def isqrt_sum({u}: int, {v}: int) -> int:\n    return math.isqrt(max(0, {u} + {v}))"),
+        ("isqrt_hypot", lambda u, v: f"def isqrt_hypot({u}: int, {v}: int) -> int:\n    return math.isqrt({u} * {u} + {v} * {v})"),
+        ("pow_int", lambda u, v: f"def pow_int({u}: int, {v}: int) -> int:\n    return {u} ** {v}"),
+        ("pow_abs", lambda u, v: f"def pow_abs({u}: int, {v}: int) -> int:\n    return abs({u}) ** {v}"),
+        ("euclidean_sq", lambda u, v: f"def euclidean_sq({u}: int, {v}: int) -> int:\n    return (abs({u} - {v})) ** 2"),
+    ]
+
+    for name, templ in math_binary_templates:
+        for u, v in BINARY_VARS:
+            funcs.append(templ(u, v))
+
+    math_single_templates = [
+        ("abs_func", lambda v: f"def abs_func({v}: int) -> int:\n    return abs({v})"),
+        ("isqrt_func", lambda v: f"def isqrt_func({v}: int) -> int:\n    return math.isqrt(max(0, {v}))"),
+        ("square_pow", lambda v: f"def square_pow({v}: int) -> int:\n    return {v} ** 2"),
+        ("cube_pow", lambda v: f"def cube_pow({v}: int) -> int:\n    return {v} ** 3"),
+        ("isqrt_cube", lambda v: f"def isqrt_cube({v}: int) -> int:\n    return math.isqrt(max(0, {v} ** 3))"),
+    ]
+
+    for name, templ in math_single_templates:
+        for v in SINGLE_VARS:
+            funcs.append(templ(v))
+
+    # =========================================================================
+    # 4. Multi-line functions with Local Variable Assignments (Assign & AugAssign)
+    # =========================================================================
+    multiline_binary_templates = [
+        ("calc_with_locals", lambda u, v: (
+            f"def calc_with_locals({u}: int, {v}: int) -> int:\n"
+            f"    diff = {u} - {v}\n"
+            f"    sq = diff * diff\n"
+            f"    return sq + 1"
+        )),
+        ("bitwise_combine_locals", lambda u, v: (
+            f"def bitwise_combine_locals({u}: int, {v}: int) -> int:\n"
+            f"    mask = {u} & {v}\n"
+            f"    res = mask ^ ({u} | {v})\n"
+            f"    return res"
+        )),
+        ("shift_and_mask", lambda u, v: (
+            f"def shift_and_mask({u}: int, {v}: int) -> int:\n"
+            f"    shift = {u} << 2\n"
+            f"    res = shift & {v}\n"
+            f"    return res"
+        )),
+        ("norm_l1", lambda u, v: (
+            f"def norm_l1({u}: int, {v}: int) -> int:\n"
+            f"    d1 = abs({u})\n"
+            f"    d2 = abs({v})\n"
+            f"    return d1 + d2"
+        )),
+        ("average_squares", lambda u, v: (
+            f"def average_squares({u}: int, {v}: int) -> int:\n"
+            f"    sq1 = {u} * {u}\n"
+            f"    sq2 = {v} * {v}\n"
+            f"    return (sq1 + sq2) // 2"
+        )),
+        ("abs_diff_pow", lambda u, v: (
+            f"def abs_diff_pow({u}: int, {v}: int) -> int:\n"
+            f"    diff = abs({u} - {v})\n"
+            f"    res = diff ** 2\n"
+            f"    return res"
+        )),
+        ("scaled_diff", lambda u, v: (
+            f"def scaled_diff({u}: int, {v}: int) -> int:\n"
+            f"    diff = {u} - {v}\n"
+            f"    res = diff * 3\n"
+            f"    return res + {u}"
+        )),
+        ("pythagoras_approx", lambda u, v: (
+            f"def pythagoras_approx({u}: int, {v}: int) -> int:\n"
+            f"    sum_sq = {u} * {u} + {v} * {v}\n"
+            f"    res = math.isqrt(sum_sq)\n"
+            f"    return res"
+        )),
+        ("min_max_delta", lambda u, v: (
+            f"def min_max_delta({u}: int, {v}: int) -> int:\n"
+            f"    lo = min({u}, {v})\n"
+            f"    hi = max({u}, {v})\n"
+            f"    return hi - lo"
+        )),
+        ("xor_swap_step", lambda u, v: (
+            f"def xor_swap_step({u}: int, {v}: int) -> int:\n"
+            f"    temp = {u} ^ {v}\n"
+            f"    res = temp ^ {u}\n"
+            f"    return res"
+        )),
+    ]
+
+    for name, templ in multiline_binary_templates:
+        for u, v in BINARY_VARS:
+            funcs.append(templ(u, v))
+
+    multiline_single_templates = [
+        ("cube_plus_square", lambda v: (
+            f"def cube_plus_square({v}: int) -> int:\n"
+            f"    sq = {v} * {v}\n"
+            f"    cb = sq * {v}\n"
+            f"    return cb + sq"
+        )),
+        ("isqrt_step", lambda v: (
+            f"def isqrt_step({v}: int) -> int:\n"
+            f"    root = math.isqrt(max(0, {v}))\n"
+            f"    res = root * root\n"
+            f"    return res"
+        )),
+        ("bit_permute", lambda v: (
+            f"def bit_permute({v}: int) -> int:\n"
+            f"    hi = ({v} >> 4) & 15\n"
+            f"    lo = {v} & 15\n"
+            f"    return (lo << 4) | hi"
+        )),
+        ("abs_decay", lambda v: (
+            f"def abs_decay({v}: int) -> int:\n"
+            f"    mag = abs({v})\n"
+            f"    res = mag // 2\n"
+            f"    return res"
+        )),
+    ]
+
+    for name, templ in multiline_single_templates:
+        for v in SINGLE_VARS:
+            funcs.append(templ(v))
+
+    # =========================================================================
+    # 5. Triple variable operations (math, clamp, multiline)
+    # =========================================================================
     triple_templates = [
         ("multiply_three", lambda u, v, w: f"def multiply_three({u}: int, {v}: int, {w}: int) -> int:\n    return {u} * {v} * {w}"),
         ("add_three", lambda u, v, w: f"def add_three({u}: int, {v}: int, {w}: int) -> int:\n    return {u} + {v} + {w}"),
@@ -111,14 +286,43 @@ def generate_orthogonal_dataset() -> List[str]:
         ("max_three", lambda u, v, w: f"def max_three({u}: int, {v}: int, {w}: int) -> int:\n    m = {u}\n    if {v} > m:\n        m = {v}\n    if {w} > m:\n        m = {w}\n    return m"),
         ("min_three", lambda u, v, w: f"def min_three({u}: int, {v}: int, {w}: int) -> int:\n    m = {u}\n    if {v} < m:\n        m = {v}\n    if {w} < m:\n        m = {w}\n    return m"),
         ("clamp", lambda u, v, w: f"def clamp({u}: float, {v}: float, {w}: float) -> float:\n    if {u} < {v}:\n        return {v}\n    if {u} > {w}:\n        return {w}\n    return {u}"),
+        ("clamp_math", lambda u, v, w: f"def clamp_math({u}: int, {v}: int, {w}: int) -> int:\n    return min(max({u}, {v}), {w})"),
+        ("min_three_math", lambda u, v, w: f"def min_three_math({u}: int, {v}: int, {w}: int) -> int:\n    return min(min({u}, {v}), {w})"),
+        ("max_three_math", lambda u, v, w: f"def max_three_math({u}: int, {v}: int, {w}: int) -> int:\n    return max(max({u}, {v}), {w})"),
         ("in_range", lambda u, v, w: f"def in_range({u}: int, {v}: int, {w}: int) -> bool:\n    return {v} <= {u} <= {w}"),
+        ("clamp_with_locals", lambda u, v, w: (
+            f"def clamp_with_locals({u}: int, {v}: int, {w}: int) -> int:\n"
+            f"    temp = max({u}, {v})\n"
+            f"    res = min(temp, {w})\n"
+            f"    return res"
+        )),
+        ("poly_eval", lambda u, v, w: (
+            f"def poly_eval({u}: int, {v}: int, {w}: int) -> int:\n"
+            f"    sq = {u} * {u}\n"
+            f"    term = {v} * sq\n"
+            f"    return term + {w}"
+        )),
+        ("linear_blend", lambda u, v, w: (
+            f"def linear_blend({u}: int, {v}: int, {w}: int) -> int:\n"
+            f"    d1 = {u} * {w}\n"
+            f"    d2 = {v} * (100 - {w})\n"
+            f"    return (d1 + d2) // 100"
+        )),
+        ("sum_three_scaled", lambda u, v, w: (
+            f"def sum_three_scaled({u}: int, {v}: int, {w}: int) -> int:\n"
+            f"    total = {u} + {v} + {w}\n"
+            f"    res = total * 2\n"
+            f"    return res"
+        )),
     ]
 
     for name, templ in triple_templates:
         for u, v, w in TRIPLE_VARS:
             funcs.append(templ(u, v, w))
 
-    # 3. Single variable arithmetic, logic, and series (rotated over all SINGLE_VARS)
+    # =========================================================================
+    # 6. Single variable arithmetic, logic, and series
+    # =========================================================================
     single_templates = [
         ("is_even", lambda v: f"def is_even({v}: int) -> bool:\n    return {v} % 2 == 0"),
         ("is_odd", lambda v: f"def is_odd({v}: int) -> bool:\n    return {v} % 2 != 0"),
@@ -147,7 +351,9 @@ def generate_orthogonal_dataset() -> List[str]:
         for v in SINGLE_VARS:
             funcs.append(templ(v))
 
-    # 4. Collection single operations (rotated over all COLLECTIONS_VARS)
+    # =========================================================================
+    # 7. Collection single operations
+    # =========================================================================
     collection_single_templates = [
         ("list_sum", lambda c: f"def list_sum({c}: list[int]) -> int:\n    total = 0\n    for x in {c}:\n        total += x\n    return total"),
         ("list_product", lambda c: f"def list_product({c}: list[int]) -> int:\n    prod = 1\n    for x in {c}:\n        prod *= x\n    return prod"),
@@ -173,7 +379,9 @@ def generate_orthogonal_dataset() -> List[str]:
         for c in COLLECTIONS_VARS:
             funcs.append(templ(c))
 
-    # 5. Collection + Scalar operation (pairs between COLLECTIONS_VARS and SINGLE_VARS)
+    # =========================================================================
+    # 8. Collection + Scalar operations
+    # =========================================================================
     collection_scalar_templates = [
         ("contains", lambda c, v: f"def contains({c}: list[int], {v}: int) -> bool:\n    for x in {c}:\n        if x == {v}:\n            return True\n    return False"),
         ("count_occurrences", lambda c, v: f"def count_occurrences({c}: list[int], {v}: int) -> int:\n    count = 0\n    for x in {c}:\n        if x == {v}:\n            count += 1\n    return count"),
@@ -197,14 +405,15 @@ def generate_orthogonal_dataset() -> List[str]:
         ("two_sum_indices", lambda c, v: f"def two_sum_indices({c}: list[int], {v}: int) -> list[int]:\n    seen = {{}}\n    for i, x in enumerate({c}):\n        comp = {v} - x\n        if comp in seen:\n            return [seen[comp], i]\n        seen[x] = i\n    return []"),
     ]
 
-    # Combine collections and single vars in a balanced round-robin
     for templ_name, templ in collection_scalar_templates:
         for idx in range(len(COLLECTIONS_VARS)):
             c = COLLECTIONS_VARS[idx]
             v = SINGLE_VARS[idx % len(SINGLE_VARS)]
             funcs.append(templ(c, v))
 
-    # 6. Two collections operations (rotated over pairs of COLLECTIONS_VARS)
+    # =========================================================================
+    # 9. Two collections operations
+    # =========================================================================
     collection_pairs = [
         ("items1", "items2"),
         ("nums1", "nums2"),
@@ -229,10 +438,12 @@ def generate_orthogonal_dataset() -> List[str]:
         for c1, c2 in collection_pairs:
             funcs.append(templ(c1, c2))
 
-    # 7. Add systematic, indexed variations to reach exactly 2000 functions
-    # Using strict round-robin over pools so that no single variable dominates
+    # =========================================================================
+    # 10. Systematic round-robin variations across ALL pools
+    # =========================================================================
+    # Ensures rich representation of bitwise, math, and locals up to ~2800 functions
     idx = 1
-    while len(funcs) < 2200:
+    while len(funcs) < 3100:
         c = idx * 2
         # Single var round-robin
         v_s = SINGLE_VARS[idx % len(SINGLE_VARS)]
@@ -244,6 +455,39 @@ def generate_orthogonal_dataset() -> List[str]:
         funcs.append(f"def is_equal_to_{idx}({v_s}: int) -> bool:\n    return {v_s} == {idx}")
         funcs.append(f"def is_divisible_by_{idx + 1}({v_s}: int) -> bool:\n    return {v_s} % {idx + 1} == 0")
         funcs.append(f"def modulo_{idx + 2}({v_s}: int) -> int:\n    return {v_s} % {idx + 2}")
+        funcs.append(f"def bitwise_and_mask_{idx}({v_s}: int) -> int:\n    return {v_s} & {c + 1}")
+        funcs.append(f"def bitwise_xor_mask_{idx}({v_s}: int) -> int:\n    return {v_s} ^ {c + 3}")
+        funcs.append(f"def isqrt_plus_{idx}({v_s}: int) -> int:\n    return math.isqrt(max(0, {v_s} + {idx}))")
+        funcs.append(f"def abs_plus_{idx}({v_s}: int) -> int:\n    return abs({v_s}) + {idx}")
+        funcs.append(f"def min_with_{idx}({v_s}: int) -> int:\n    return min({v_s}, {idx})")
+        funcs.append(f"def max_with_{idx}({v_s}: int) -> int:\n    return max({v_s}, {idx})")
+
+        # Binary var round-robin
+        v_b1, v_b2 = BINARY_VARS[idx % len(BINARY_VARS)]
+        funcs.append(f"def linear_combo_{idx}({v_b1}: int, {v_b2}: int) -> int:\n    return {idx} * {v_b1} + {v_b2}")
+        funcs.append(f"def diff_scaled_{idx}({v_b1}: int, {v_b2}: int) -> int:\n    return ({v_b1} - {v_b2}) * {idx}")
+        funcs.append(
+            f"def local_pipeline_{idx}({v_b1}: int, {v_b2}: int) -> int:\n"
+            f"    diff = {v_b1} - {v_b2}\n"
+            f"    res = diff * {idx}\n"
+            f"    return res + 1"
+        )
+        funcs.append(
+            f"def bitwise_local_{idx}({v_b1}: int, {v_b2}: int) -> int:\n"
+            f"    mask = {v_b1} & {v_b2}\n"
+            f"    shift = mask << {(idx % 4) + 1}\n"
+            f"    return shift ^ {v_b1}"
+        )
+
+        # Triple var round-robin
+        v_t1, v_t2, v_t3 = TRIPLE_VARS[idx % len(TRIPLE_VARS)]
+        funcs.append(f"def clamp_range_{idx}({v_t1}: int, {v_t2}: int, {v_t3}: int) -> int:\n    return min(max({v_t1}, {v_t2}), {v_t3})")
+        funcs.append(
+            f"def poly_locals_{idx}({v_t1}: int, {v_t2}: int, {v_t3}: int) -> int:\n"
+            f"    sq = {v_t1} * {v_t1}\n"
+            f"    term = sq * {v_t2}\n"
+            f"    return term + {v_t3}"
+        )
 
         # Collection var round-robin
         v_l = COLLECTIONS_VARS[idx % len(COLLECTIONS_VARS)]
@@ -253,11 +497,6 @@ def generate_orthogonal_dataset() -> List[str]:
         funcs.append(f"def add_to_elements_{idx}({v_l}: list[int]) -> list[int]:\n    return [x + {idx} for x in {v_l}]")
         funcs.append(f"def take_first_{idx}({v_l}: list[int]) -> list[int]:\n    return {v_l}[:{idx}]")
         funcs.append(f"def drop_first_{idx}({v_l}: list[int]) -> list[int]:\n    return {v_l}[{idx}:]")
-
-        # Binary var round-robin
-        v_b1, v_b2 = BINARY_VARS[idx % len(BINARY_VARS)]
-        funcs.append(f"def linear_combo_{idx}({v_b1}: int, {v_b2}: int) -> int:\n    return {idx} * {v_b1} + {v_b2}")
-        funcs.append(f"def diff_scaled_{idx}({v_b1}: int, {v_b2}: int) -> int:\n    return ({v_b1} - {v_b2}) * {idx}")
 
         idx += 1
 
@@ -270,12 +509,13 @@ def generate_orthogonal_dataset() -> List[str]:
             seen.add(code)
             valid_funcs.append(code)
 
-    return valid_funcs[:2000]
+    # Return balanced 2800 functions
+    return valid_funcs[:2800]
 
 
 def main() -> None:
     print("=" * 70)
-    print("GENERATING ORTHOGONALLY BALANCED DATASET (2000 FUNCTIONS)")
+    print("GENERATING ORTHOGONALLY BALANCED DATASET v3 (SMART VM & LOCALS)")
     print("=" * 70)
 
     funcs = generate_orthogonal_dataset()

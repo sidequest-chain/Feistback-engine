@@ -22,7 +22,7 @@ PYTHON_BUILTINS: Set[str] = {
     "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float",
     "int", "len", "list", "map", "max", "min", "range", "reversed",
     "round", "set", "sorted", "str", "sum", "tuple", "zip",
-    "True", "False", "None",
+    "True", "False", "None", "math", "isqrt", "pow",
 }
 
 

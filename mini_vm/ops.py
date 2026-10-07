@@ -27,6 +27,36 @@ class OpCode:
     REGEX_MATCH = 14   # POP pattern, POP text -> PUSH 1 if match else 0
     BRANCH_IF = 15     # Argument/Stack: target_addr -> POP cond, if cond != 0: IP = target_addr
     JMP = 16           # Argument/Stack: target_addr -> IP = target_addr
+    CMP_LT = 17        # POP b, POP a -> PUSH 1 if a < b else 0
+    CMP_LE = 18        # POP b, POP a -> PUSH 1 if a <= b else 0
+    CMP_GE = 19        # POP b, POP a -> PUSH 1 if a >= b else 0
+    CMP_NE = 20        # POP b, POP a -> PUSH 1 if a != b else 0
+
+    # Stack Management
+    DROP = 21          # POP top element and discard
+    SWAP = 22          # POP b, POP a -> PUSH b, PUSH a
+    OVER = 23          # Copy 2nd stack element to top (a, b -> a, b, a)
+    ROT = 24           # Rotate top 3 stack elements (a, b, c -> b, c, a)
+
+    # Scientific Mathematics
+    POW = 25           # POP b, POP a -> PUSH a ** b
+    NEG = 26           # POP a -> PUSH -a
+    ABS = 27           # POP a -> PUSH abs(a)
+    MIN = 28           # POP b, POP a -> PUSH min(a, b)
+    MAX = 29           # POP b, POP a -> PUSH max(a, b)
+    ISQRT = 30         # POP a -> PUSH integer square root
+
+    # Bitwise Operations
+    BIT_AND = 31       # POP b, POP a -> PUSH a & b
+    BIT_OR = 32        # POP b, POP a -> PUSH a | b
+    BIT_XOR = 33       # POP b, POP a -> PUSH a ^ b
+    BIT_NOT = 34       # POP a -> PUSH ~a
+    SHL = 35           # POP b, POP a -> PUSH a << b
+    SHR = 36           # POP b, POP a -> PUSH a >> b
+
+    # Local Variables
+    STORE_LOCAL = 37   # Argument: local_idx -> POP val, locals[local_idx] = val
+    LOAD_LOCAL = 38    # Argument: local_idx -> PUSH locals[local_idx]
 
 
 OPCODE_NAMES: Dict[int, str] = {
@@ -47,6 +77,28 @@ OPCODE_NAMES: Dict[int, str] = {
     OpCode.REGEX_MATCH: "REGEX_MATCH",
     OpCode.BRANCH_IF: "BRANCH_IF",
     OpCode.JMP: "JMP",
+    OpCode.CMP_LT: "CMP_LT",
+    OpCode.CMP_LE: "CMP_LE",
+    OpCode.CMP_GE: "CMP_GE",
+    OpCode.CMP_NE: "CMP_NE",
+    OpCode.DROP: "DROP",
+    OpCode.SWAP: "SWAP",
+    OpCode.OVER: "OVER",
+    OpCode.ROT: "ROT",
+    OpCode.POW: "POW",
+    OpCode.NEG: "NEG",
+    OpCode.ABS: "ABS",
+    OpCode.MIN: "MIN",
+    OpCode.MAX: "MAX",
+    OpCode.ISQRT: "ISQRT",
+    OpCode.BIT_AND: "BIT_AND",
+    OpCode.BIT_OR: "BIT_OR",
+    OpCode.BIT_XOR: "BIT_XOR",
+    OpCode.BIT_NOT: "BIT_NOT",
+    OpCode.SHL: "SHL",
+    OpCode.SHR: "SHR",
+    OpCode.STORE_LOCAL: "STORE_LOCAL",
+    OpCode.LOAD_LOCAL: "LOAD_LOCAL",
 }
 
 NAME_TO_OPCODE: Dict[str, int] = {v: k for k, v in OPCODE_NAMES.items()}
@@ -56,4 +108,6 @@ ARG_OPCODES: Set[int] = {
     OpCode.JMP_IF_FALSE,
     OpCode.BRANCH_IF,
     OpCode.JMP,
+    OpCode.STORE_LOCAL,
+    OpCode.LOAD_LOCAL,
 }

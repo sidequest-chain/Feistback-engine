@@ -15,7 +15,13 @@ import torch
 from runner.tokenizer import HybridTokenizer
 from runner.args_parser import extract_numeric_args
 from mini_vm.vm import MiniStackVM
-from core.model import FeistelHolographicLM
+try:
+    from core.model import FeistelHolographicLM
+except ImportError:
+    try:
+        from archive.legacy_core.model import FeistelHolographicLM
+    except ImportError:
+        FeistelHolographicLM = None
 
 
 class HybridPipeline:

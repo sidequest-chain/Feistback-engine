@@ -6,20 +6,31 @@ mathematical accuracy. Pure Python implementation with zero PyTorch dependencies
 """
 
 import json
+import math
 import re
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from mini_vm.ops import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
+
+
+class RuntimeExecutionError(RuntimeError):
+    """Raised when VM execution exceeds maximum instruction gas limit or encounters fatal runtime failure."""
+    pass
 
 
 class MiniStackVM:
     """
     Compact stack virtual machine for executing dynamic bytecode programs.
     """
-    def __init__(self, max_steps: int = 100):
+    def __init__(self, max_steps: int = 100_000):
         self.max_steps = max_steps
 
-    def execute(self, bytecode: List[Any], args: Optional[List[Any]] = None) -> Any:
+    def execute(
+        self,
+        bytecode: List[Any],
+        args: Optional[List[Any]] = None,
+        max_steps: Optional[int] = None,
+    ) -> Any:
         """
         Executes bytecode sequence using supplied register arguments.
 
@@ -34,11 +45,13 @@ class MiniStackVM:
             args = []
 
         stack: List[Any] = []
+        locals_store: Dict[int, Any] = {}
         ip = 0
         steps = 0
         n = len(bytecode)
+        step_limit = max_steps if max_steps is not None else self.max_steps
 
-        while ip < n and steps < self.max_steps:
+        while ip < n and steps < step_limit:
             steps += 1
             op = bytecode[ip]
             ip += 1
@@ -124,6 +137,46 @@ class MiniStackVM:
                 a = stack.pop()
                 try:
                     stack.append(1 if a == b else 0)
+                except Exception:
+                    stack.append(0)
+
+            elif op == OpCode.CMP_LT:
+                if len(stack) < 2:
+                    raise RuntimeError("CMP_LT requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                try:
+                    stack.append(1 if a < b else 0)
+                except Exception:
+                    stack.append(0)
+
+            elif op == OpCode.CMP_LE:
+                if len(stack) < 2:
+                    raise RuntimeError("CMP_LE requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                try:
+                    stack.append(1 if a <= b else 0)
+                except Exception:
+                    stack.append(0)
+
+            elif op == OpCode.CMP_GE:
+                if len(stack) < 2:
+                    raise RuntimeError("CMP_GE requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                try:
+                    stack.append(1 if a >= b else 0)
+                except Exception:
+                    stack.append(0)
+
+            elif op == OpCode.CMP_NE:
+                if len(stack) < 2:
+                    raise RuntimeError("CMP_NE requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                try:
+                    stack.append(1 if a != b else 0)
                 except Exception:
                     stack.append(0)
 
@@ -226,14 +279,137 @@ class MiniStackVM:
                     raise IndexError(f"JMP target {target} out of bounds [0, {n}]!")
                 ip = target
 
+            elif op == OpCode.DROP:
+                if not stack:
+                    raise RuntimeError("DROP: stack is empty!")
+                stack.pop()
+
+            elif op == OpCode.SWAP:
+                if len(stack) < 2:
+                    raise RuntimeError("SWAP requires at least 2 stack elements!")
+                stack[-1], stack[-2] = stack[-2], stack[-1]
+
+            elif op == OpCode.OVER:
+                if len(stack) < 2:
+                    raise RuntimeError("OVER requires at least 2 stack elements!")
+                stack.append(stack[-2])
+
+            elif op == OpCode.ROT:
+                if len(stack) < 3:
+                    raise RuntimeError("ROT requires at least 3 stack elements!")
+                c = stack.pop()
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(b)
+                stack.append(c)
+                stack.append(a)
+
+            elif op == OpCode.POW:
+                if len(stack) < 2:
+                    raise RuntimeError("POW requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(a ** b)
+
+            elif op == OpCode.NEG:
+                if not stack:
+                    raise RuntimeError("NEG: stack is empty!")
+                a = stack.pop()
+                stack.append(-a)
+
+            elif op == OpCode.ABS:
+                if not stack:
+                    raise RuntimeError("ABS: stack is empty!")
+                a = stack.pop()
+                stack.append(abs(a))
+
+            elif op == OpCode.MIN:
+                if len(stack) < 2:
+                    raise RuntimeError("MIN requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(min(a, b))
+
+            elif op == OpCode.MAX:
+                if len(stack) < 2:
+                    raise RuntimeError("MAX requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(max(a, b))
+
+            elif op == OpCode.ISQRT:
+                if not stack:
+                    raise RuntimeError("ISQRT: stack is empty!")
+                a = stack.pop()
+                stack.append(math.isqrt(max(0, int(a))))
+
+            elif op == OpCode.BIT_AND:
+                if len(stack) < 2:
+                    raise RuntimeError("BIT_AND requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(int(a) & int(b))
+
+            elif op == OpCode.BIT_OR:
+                if len(stack) < 2:
+                    raise RuntimeError("BIT_OR requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(int(a) | int(b))
+
+            elif op == OpCode.BIT_XOR:
+                if len(stack) < 2:
+                    raise RuntimeError("BIT_XOR requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(int(a) ^ int(b))
+
+            elif op == OpCode.BIT_NOT:
+                if not stack:
+                    raise RuntimeError("BIT_NOT: stack is empty!")
+                a = stack.pop()
+                stack.append(~int(a))
+
+            elif op == OpCode.SHL:
+                if len(stack) < 2:
+                    raise RuntimeError("SHL requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(int(a) << int(b))
+
+            elif op == OpCode.SHR:
+                if len(stack) < 2:
+                    raise RuntimeError("SHR requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                stack.append(int(a) >> int(b))
+
+            elif op == OpCode.STORE_LOCAL:
+                if ip >= n:
+                    raise IndexError("STORE_LOCAL requires local variable index operand!")
+                local_idx = bytecode[ip]
+                ip += 1
+                if not stack:
+                    raise RuntimeError("STORE_LOCAL: stack is empty!")
+                locals_store[local_idx] = stack.pop()
+
+            elif op == OpCode.LOAD_LOCAL:
+                if ip >= n:
+                    raise IndexError("LOAD_LOCAL requires local variable index operand!")
+                local_idx = bytecode[ip]
+                ip += 1
+                if local_idx not in locals_store:
+                    raise NameError(f"Local variable index {local_idx} referenced before assignment!")
+                stack.append(locals_store[local_idx])
+
             elif op == OpCode.RET:
                 return stack.pop() if stack else 0
 
             else:
                 raise ValueError(f"Unknown OpCode: {op}")
 
-        if steps >= self.max_steps:
-            raise TimeoutError(f"VM execution step limit ({self.max_steps}) exceeded!")
+        if steps >= step_limit:
+            raise RuntimeExecutionError("Instruction limit exceeded")
 
         return stack.pop() if stack else 0
 
