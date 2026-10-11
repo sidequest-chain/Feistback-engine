@@ -173,15 +173,15 @@ def cmd_install(args: argparse.Namespace, registry: ModelRegistry) -> int:
 
     temp_dir_obj: Optional[tempfile.TemporaryDirectory] = None
     try:
-        if source_path.is_file() and source_path.suffix.lower() == ".zip":
-            print("Arhiivi lahtipakkimine ajutisse kausta...")
+        if source_path.is_file() and source_path.suffix.lower() in (".zip", ".feist"):
+            print(f"Arhiivi ({source_path.suffix}) lahtipakkimine ajutisse kausta...")
             temp_dir_obj = tempfile.TemporaryDirectory()
             extract_target = Path(temp_dir_obj.name)
             with zipfile.ZipFile(source_path, "r") as zip_ref:
                 zip_ref.extractall(extract_target)
             model_src_dir = _find_model_dir(extract_target)
             if not model_src_dir:
-                print("[VIGA] .zip arhiivist ei leitud 'config.json' faili!")
+                print(f"[VIGA] Arhiivist ({source_path.name}) ei leitud 'config.json' faili!")
                 return 1
         elif source_path.is_dir():
             model_src_dir = _find_model_dir(source_path)
@@ -189,7 +189,7 @@ def cmd_install(args: argparse.Namespace, registry: ModelRegistry) -> int:
                 print(f"[VIGA] Kaustas '{source_path}' ei leitud 'config.json' faili!")
                 return 1
         else:
-            print(f"[VIGA] Toetamata allika t\u00fc\u00fcp: {source_path}. N\u00f5utud on kaust v\u00f5i .zip fail.")
+            print(f"[VIGA] Toetamata allika t\u00fc\u00fcp: {source_path}. N\u00f5utud on kaust, .feist v\u00f5i .zip fail.")
             return 1
 
         # Pre-installation verification
@@ -236,6 +236,32 @@ def cmd_install(args: argparse.Namespace, registry: ModelRegistry) -> int:
     finally:
         if temp_dir_obj is not None:
             temp_dir_obj.cleanup()
+
+
+def cmd_pack(args: argparse.Namespace, registry: ModelRegistry) -> int:
+    """Packages a model into a .feist distribution archive."""
+    target = args.model_name_or_dir
+    out_path = args.output_path
+    print(f"Pakin mudelit '{target}' .feist arhiivi...")
+
+    try:
+        res = registry.package_model(target, output_path=out_path)
+    except Exception as e:
+        print(f"[VIGA] Mudeli pakkimine eba\u00f5nnestus: {e}")
+        return 1
+
+    print("=" * 70)
+    print("FEISTBACK MUDELI PAKKIMISE RAPORT (.feist arhiiv)")
+    print("=" * 70)
+    print(f"Mudel          : {res['model_name']}")
+    print(f"Sihtarhiiv     : {res['archive_path']}")
+    print(f"Arhiivi suurus : {res['archive_size_mb']:.2f} MB")
+    print("Pakitud failid :")
+    for f in res.get("files_packed", []):
+        print(f"  - {f['name']} ({f['size_mb']:.2f} MB)")
+    print("=" * 70)
+    print(f"=> Mudel '{res['model_name']}' on edukalt pakitud: {res['archive_path']}\n")
+    return 0
 
 
 def cmd_remove(args: argparse.Namespace, registry: ModelRegistry) -> int:
@@ -295,16 +321,27 @@ def main() -> int:
     verify_p = subparsers.add_parser("verify", help="Verify model integrity and CPU dry-run.")
     verify_p.add_argument("model_name", type=str, help="Name of model to verify.")
 
-    # 3. install
-    install_p = subparsers.add_parser("install", help="Install a model from directory or .zip archive.")
-    install_p.add_argument("source_path", type=str, help="Path to model directory or .zip file.")
+    # 3. pack
+    pack_p = subparsers.add_parser("pack", help="Package a model into a .feist distribution archive.")
+    pack_p.add_argument("model_name_or_dir", type=str, help="Model name in registry or path to model directory.")
+    pack_p.add_argument(
+        "output_path",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Optional output archive path (default: dist/<name>.feist).",
+    )
+
+    # 4. install
+    install_p = subparsers.add_parser("install", help="Install a model from directory, .feist, or .zip archive.")
+    install_p.add_argument("source_path", type=str, help="Path to model directory, .feist, or .zip file.")
     install_p.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing model without prompting.",
     )
 
-    # 4. remove
+    # 5. remove
     remove_p = subparsers.add_parser("remove", help="Remove an installed model.")
     remove_p.add_argument("model_name", type=str, help="Name of model to remove.")
     remove_p.add_argument(
@@ -321,6 +358,8 @@ def main() -> int:
         return cmd_list(args, registry)
     elif args.command == "verify":
         return cmd_verify(args, registry)
+    elif args.command == "pack":
+        return cmd_pack(args, registry)
     elif args.command == "install":
         return cmd_install(args, registry)
     elif args.command == "remove":

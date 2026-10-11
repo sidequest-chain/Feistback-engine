@@ -226,7 +226,7 @@ def generate_contract_greedy(
 # Main Training Loop
 # ==============================================================================
 
-def train_and_evaluate() -> None:
+def train_and_evaluate(export_package: bool = False) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 80)
     print("TRAINING EESTI_KEELE_SL2NG SPECIALIST MICRO-MODEL (PUREFEISTELLM RAF)")
@@ -372,6 +372,38 @@ def train_and_evaluate() -> None:
     torch.save(checkpoint_payload, OUTPUT_CHECKPOINT)
     print("Checkpoint saved successfully.")
 
+    # Ensure declarative config.json is generated/updated with actual hyperparameters
+    model_dir = OUTPUT_CHECKPOINT.parent
+    config_path = model_dir / "config.json"
+    config_data = {
+        "name": "eesti_keele_sl2ng",
+        "role": "language_expert",
+        "weights": OUTPUT_CHECKPOINT.name,
+        "tokenizer": TOKENIZER_PATH.name,
+        "vocab_size": vocab_size,
+        "d_model": d_model,
+        "num_layers": num_layers,
+        "max_seq_len": max_seq_len,
+        "memory_type": "raf",
+        "num_heads": 4,
+        "key_dim": 16,
+        "value_dim": 16,
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2, ensure_ascii=False)
+    print(f"Generated/updated declarative model config at: {config_path}")
+
+    # Package export if requested
+    if export_package:
+        from runtime.registry import ModelRegistry
+        dist_dir = REPO_ROOT / "dist"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        export_target = dist_dir / "eesti_keele_sl2ng.feist"
+        print(f"\n[Export Package] Packaging model into {export_target}...")
+        reg = ModelRegistry()
+        pkg_res = reg.package_model("eesti_keele_sl2ng", output_path=export_target)
+        print(f"[Export Package] Successfully packaged {pkg_res['model_name']} ({pkg_res['archive_size_mb']:.2f} MB) -> {pkg_res['archive_path']}")
+
     # ==========================================================================
     # Post-Training Benchmark Evaluation
     # ==========================================================================
@@ -483,9 +515,20 @@ def evaluate_checkpoint(checkpoint_path: Path, device: str = "cuda") -> None:
 
 
 if __name__ == "__main__":
-    if "--eval-only" in sys.argv:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train Estonian & IT-Slang Specialist Micro-Model")
+    parser.add_argument("--eval-only", action="store_true", help="Run benchmark evaluation on existing checkpoint")
+    parser.add_argument(
+        "--export_package",
+        action="store_true",
+        help="Automatically generate config.json and package model into dist/<name>.feist after training",
+    )
+    args = parser.parse_args()
+
+    if args.eval_only:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         evaluate_checkpoint(OUTPUT_CHECKPOINT, device=device)
     else:
-        train_and_evaluate()
+        train_and_evaluate(export_package=args.export_package)
 

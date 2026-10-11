@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+import zipfile
 
 import torch
 from tokenizers import Tokenizer
@@ -309,3 +310,63 @@ class ModelRegistry:
 
         result["valid"] = True
         return result
+
+    def package_model(
+        self,
+        model_name_or_dir: Union[str, Path],
+        output_path: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Validates and packages a model into a .feist (zip-compressed) distribution archive.
+        Returns a dict with packaging details: model_name, archive_path, archive_size_mb, files_packed.
+        """
+        check_res = self.verify_model(model_name_or_dir)
+        if not check_res["valid"]:
+            raise ValueError(
+                f"Model verification failed for '{model_name_or_dir}': {check_res.get('error')}"
+            )
+
+        model_name = check_res["model_name"]
+        model_dir = Path(check_res["model_dir"])
+
+        if output_path is None:
+            repo_root = self.models_dir.parent
+            dist_dir = repo_root / "dist"
+            dist_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = dist_dir / f"{model_name}.feist"
+        else:
+            archive_path = Path(output_path)
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+
+        files_packed = []
+        packed_names = set()
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # 1. Write config.json first
+            cfg_path = model_dir / "config.json"
+            zf.write(cfg_path, arcname="config.json")
+            packed_names.add("config.json")
+            files_packed.append({
+                "name": "config.json",
+                "size_mb": round(cfg_path.stat().st_size / (1024 * 1024), 4),
+            })
+
+            # 2. Write all other files in model_dir
+            for f_path in sorted(model_dir.rglob("*")):
+                if f_path.is_file():
+                    rel_name = f_path.relative_to(model_dir).as_posix()
+                    if rel_name in packed_names or "__pycache__" in rel_name or rel_name.endswith(".tmp"):
+                        continue
+                    zf.write(f_path, arcname=rel_name)
+                    packed_names.add(rel_name)
+                    files_packed.append({
+                        "name": rel_name,
+                        "size_mb": round(f_path.stat().st_size / (1024 * 1024), 4),
+                    })
+
+        archive_size_mb = round(archive_path.stat().st_size / (1024 * 1024), 2)
+        return {
+            "model_name": model_name,
+            "archive_path": str(archive_path),
+            "archive_size_mb": archive_size_mb,
+            "files_packed": files_packed,
+        }
