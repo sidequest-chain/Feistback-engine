@@ -72,7 +72,7 @@ lightning_logs/
 # Local Datasets & Large Data Files
 # ==========================================
 data/
-archive/legacy_data/
+archive/
 datasets/
 raw_data/
 processed_data/

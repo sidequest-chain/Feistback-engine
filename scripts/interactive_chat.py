@@ -22,19 +22,24 @@ REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from runner.engine import FeistbackEngine
-from runner.dispatcher import ConfigDispatcher
+from runtime import FeistbackEngine
+from dispatchers import ConfigDispatcher, CouncilDispatcher
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Interactive natural language chat with Feistback neuro-symbolic engine"
     )
+    default_ckpt = (
+        "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
+        if os.path.exists("models/logic_feistel_clean/pure_feistel_raf_clean.pt")
+        else "checkpoints/pure_feistel_raf_clean.pt"
+    )
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/pure_feistel_raf_clean.pt",
-        help="Path to trained checkpoint (.pt) (default: checkpoints/pure_feistel_raf_clean.pt)",
+        default=default_ckpt,
+        help="Path to trained checkpoint (.pt) (default: models/logic_feistel_clean/pure_feistel_raf_clean.pt)",
     )
     parser.add_argument(
         "--config",

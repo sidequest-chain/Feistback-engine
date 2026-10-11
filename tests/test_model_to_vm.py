@@ -23,16 +23,22 @@ if REPO_ROOT not in sys.path:
 
 import torch
 
-from core.pure_feistel_lm import PureFeistelLM
-from mini_vm.compiler import ASTCompiler
-from mini_vm.vm import MiniStackVM
-from scripts.run_pure_feistel import canonicalize_signature, decanonicalize_code
+from runtime.models.pure_feistel_lm import PureFeistelLM
+from runtime.compiler import ASTCompiler
+from runtime.vm.ministack_vm import MiniStackVM
+
+try:
+    from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
+except ImportError:
+    from scripts.run_pure_feistel import canonicalize_signature, decanonicalize_code
 
 
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
+    checkpoint_path = "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
+    if not os.path.exists(checkpoint_path):
+        checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("=" * 80)

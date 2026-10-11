@@ -1,32 +1,32 @@
 """
-Core Package
-============
-Pure neural architecture: PureFeistelLM with Reversible Associative Feistel (RAF).
-Includes O(1) reversible Feistel layers, associative matrix memory, and holographic FFT mixer.
+Legacy Core Package (Deprecated)
+================================
+Maintained for backward compatibility. Please import from runtime.models instead.
 """
 
-from core.pure_feistel_lm import PureFeistelLM
-from core.associative_memory import AssociativeMemoryBlock
-from core.reversible_feistel import ReversibleFeistelNetwork, ReversibleFeistelBlock
-from core.holographic_mixer import HolographicMixer, functional_holographic_mixer
+import warnings
+warnings.warn(
+    "Importing from 'core' is deprecated and will be removed in a future release. "
+    "Please update imports to 'runtime.models'.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-# Optional backward compatibility with archived legacy components
-try:
-    from archive.legacy_core.qwen_grafted import GraftedQwenCoder
-except ImportError:
-    GraftedQwenCoder = None
-
-try:
-    from archive.legacy_core.model import FeistelHolographicLM, ReversibleHolographicTransformer
-except ImportError:
-    FeistelHolographicLM = None
-    ReversibleHolographicTransformer = None
+from runtime.models.pure_feistel_lm import (
+    PureFeistelLM,
+    PureFeistelBackbone,
+    FeistelBlock,
+    GatedLinearRecurrence,
+)
+from runtime.models.associative_memory import AssociativeMemoryBlock
+from runtime.models.holographic_mixer import functional_holographic_mixer, compute_param_len
 
 __all__ = [
     "PureFeistelLM",
+    "PureFeistelBackbone",
+    "FeistelBlock",
+    "GatedLinearRecurrence",
     "AssociativeMemoryBlock",
-    "ReversibleFeistelNetwork",
-    "ReversibleFeistelBlock",
-    "HolographicMixer",
     "functional_holographic_mixer",
+    "compute_param_len",
 ]

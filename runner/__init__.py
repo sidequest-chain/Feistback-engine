@@ -1,23 +1,27 @@
 """
-Runner Package
-==============
-Orchestration and intent dispatching layer linking PureFeistelLM and MiniStackVM.
+Legacy Runner Package (Deprecated)
+==================================
+Maintained for backward compatibility. Please import from runtime or dispatchers instead.
 """
 
-from runner.engine import FeistbackEngine, EngineResult, TestOutcome
-from runner.dispatcher import BaseDispatcher, ConfigDispatcher
+import warnings
+warnings.warn(
+    "Importing from 'runner' is deprecated and will be removed in a future release. "
+    "Please update imports to 'runtime' or 'dispatchers'.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-# Optional backward compatibility with archived legacy components
-try:
-    from archive.legacy_runner.tokenizer import HybridTokenizer
-    from archive.legacy_runner.args_parser import extract_numeric_args
-    from archive.legacy_runner.pipeline import HybridPipeline
-    from archive.legacy_runner.adaptive_loop import AdaptiveFeistelRunner
-    from archive.legacy_runner.async_pipeline import AsyncHybridPipeline
-    from archive.legacy_runner.agent_loop import AutonomousFeistelAgent
-    from archive.legacy_runner.log_task_runner import LogTaskRunner
-except ImportError:
-    pass
+from runtime.engine import FeistbackEngine, EngineResult, TestOutcome
+from dispatchers.base import (
+    BaseDispatcher,
+    ESTONIAN_WORDS_TO_INT,
+    SYNTHESIS_PATTERNS,
+    is_synthesis_query,
+    extract_numbers,
+)
+from dispatchers.fast_path import ConfigDispatcher
+from dispatchers.council import CouncilDispatcher
 
 __all__ = [
     "FeistbackEngine",
@@ -25,4 +29,9 @@ __all__ = [
     "TestOutcome",
     "BaseDispatcher",
     "ConfigDispatcher",
+    "CouncilDispatcher",
+    "ESTONIAN_WORDS_TO_INT",
+    "SYNTHESIS_PATTERNS",
+    "is_synthesis_query",
+    "extract_numbers",
 ]

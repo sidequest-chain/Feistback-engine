@@ -1,14 +1,11 @@
 """
-Training package for FeistBack Engine distillation and fine-tuning.
+Feistback Training Workshop Package
+===================================
+Contains data generators, tokenizer trainers, and neural model training pipelines.
 """
 
-from __future__ import annotations
-
-from training.distill import FeistelDistillationTrainer
-from training.dataset import CodeDistillationDataset, generate_default_code_dataset
+from training.dataset import CodeDataset
 
 __all__ = [
-    "FeistelDistillationTrainer",
-    "CodeDistillationDataset",
-    "generate_default_code_dataset",
+    "CodeDataset",
 ]

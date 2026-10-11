@@ -11,13 +11,19 @@ Validates:
 """
 
 import math
+from pathlib import Path
 import sys
 import time
 from typing import Any, Callable, List, Tuple
 
-from mini_vm.ops import OpCode
-from mini_vm.vm import MiniStackVM, RuntimeExecutionError
-from mini_vm.compiler import ASTCompiler, compile_to_vm
+# Ensure repository root is on sys.path
+REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from runtime.vm.opcodes import OpCode
+from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
+from runtime.compiler import ASTCompiler, compile_to_vm
 
 
 def test_bitwise_ops():

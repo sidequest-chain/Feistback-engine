@@ -17,8 +17,8 @@ REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from runner.engine import FeistbackEngine
-from runner.dispatcher import ConfigDispatcher
+from runtime import FeistbackEngine
+from dispatchers import ConfigDispatcher
 
 
 def main():
@@ -29,7 +29,9 @@ def main():
     print("FEISTBACK INTENT DISPATCHER VERIFICATION TEST (NATURAL LANGUAGE -> VM)")
     print("=" * 85)
 
-    checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
+    checkpoint_path = "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
+    if not os.path.exists(checkpoint_path):
+        checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
 

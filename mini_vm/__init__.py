@@ -1,17 +1,27 @@
 """
-mini_vm Package
-===============
-Deterministic, lightweight integer stack virtual machine.
-Zero PyTorch dependencies (pure Python).
+Legacy Mini VM Package (Deprecated)
+===================================
+Maintained for backward compatibility. Please import from runtime.vm or runtime.compiler instead.
 """
 
-from mini_vm.ops import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
-from mini_vm.vm import MiniStackVM
+import warnings
+warnings.warn(
+    "Importing from 'mini_vm' is deprecated and will be removed in a future release. "
+    "Please update imports to 'runtime.vm' or 'runtime.compiler'.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
+from runtime.vm.opcodes import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
+from runtime.compiler import ASTCompiler
 
 __all__ = [
+    "MiniStackVM",
+    "RuntimeExecutionError",
     "OpCode",
     "OPCODE_NAMES",
     "NAME_TO_OPCODE",
     "ARG_OPCODES",
-    "MiniStackVM",
+    "ASTCompiler",
 ]
