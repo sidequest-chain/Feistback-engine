@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.pure_feistel_lm import PureFeistelLM
+from runtime.models.pure_feistel_lm import PureFeistelLM
 
 # Reproducibility
 random.seed(42)
@@ -48,8 +48,8 @@ if torch.cuda.is_available():
 
 # File paths
 DATA_PATH = REPO_ROOT / "data" / "slang_train_10k.jsonl"
-TOKENIZER_PATH = REPO_ROOT / "checkpoints" / "slang_tokenizer_4k" / "tokenizer.json"
-OUTPUT_CHECKPOINT = REPO_ROOT / "checkpoints" / "slang_expert_feistel.pt"
+TOKENIZER_PATH = REPO_ROOT / "models" / "eesti_keele_sl2ng" / "tokenizer.json"
+OUTPUT_CHECKPOINT = REPO_ROOT / "models" / "eesti_keele_sl2ng" / "slang_expert_feistel.pt"
 
 
 # ==============================================================================

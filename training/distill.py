@@ -37,7 +37,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, Qwen2ForCausalLM
 
-from core.pure_feistel_lm import PureFeistelLM
+from runtime.models.pure_feistel_lm import PureFeistelLM
 from training.dataset import CodeDistillationDataset
 
 
@@ -82,8 +82,8 @@ class FeistelDistillationTrainer:
         kd_top_k: int = 64,
         ws_weight: float = 0.05,
         vocab_size: int = 151936,
-        vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
-        pruned_weights_path: str = "checkpoints/vocab_16k/pruned_weights.pt",
+        vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
+        pruned_weights_path: str = "models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
         memory_type: str = "glr",
         best_ckpt_name: Optional[str] = None,
         data_path: str = "data/train_code.jsonl",
@@ -556,7 +556,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ws_weight", type=float, default=0.05, help="Cross-entropy weight for whitespace tokens")
     parser.add_argument("--vocab_size", type=int, default=151936, help="Vocabulary size (151936 or 16384)")
     parser.add_argument("--vocab_dir", type=str, default=None, help="Directory containing 16k vocab_map.pt and pruned_weights.pt")
-    parser.add_argument("--vocab_map", type=str, default="checkpoints/vocab_16k/vocab_map.pt", help="Path to vocab_map.pt")
+    parser.add_argument("--vocab_map", type=str, default="models/logic_feistel_clean/vocab_16k/vocab_map.pt", help="Path to vocab_map.pt")
     parser.add_argument("--save_dir", "--checkpoint_dir", dest="save_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--pure_ce", action="store_true", help="Force pure cross-entropy training with 16k vocabulary")
     parser.add_argument("--num_layers", "--student_layers", dest="student_layers", type=int, default=12, help="Number of Feistel layers in student")
@@ -571,7 +571,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     vocab_map = args.vocab_map
-    pruned_weights = "checkpoints/vocab_16k/pruned_weights.pt"
+    pruned_weights = "models/logic_feistel_clean/vocab_16k/pruned_weights.pt"
     vocab_size = args.vocab_size
 
     if args.vocab_dir is not None:

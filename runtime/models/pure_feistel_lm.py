@@ -23,12 +23,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoTokenizer, Qwen2ForCausalLM
 
-try:
-    from runtime.models.holographic_mixer import functional_holographic_mixer, compute_param_len
-    from runtime.models.associative_memory import AssociativeMemoryBlock
-except ImportError:
-    from core.holographic_mixer import functional_holographic_mixer, compute_param_len
-    from core.associative_memory import AssociativeMemoryBlock
+from runtime.models.holographic_mixer import functional_holographic_mixer, compute_param_len
+from runtime.models.associative_memory import AssociativeMemoryBlock
 
 
 class GatedLinearRecurrence(nn.Module):
@@ -278,8 +274,8 @@ class PureFeistelLM(nn.Module):
         device: Optional[str] = None,
         from_pretrained_qwen: bool = True,
         qwen_model_name: str = "Qwen/Qwen2.5-Coder-0.5B",
-        pruned_weights_path: str = "checkpoints/vocab_16k/pruned_weights.pt",
-        vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
+        pruned_weights_path: str = "models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
+        vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
         tokenizer: Optional[Any] = None,
         embed_tokens: Optional[nn.Module] = None,
         norm: Optional[nn.Module] = None,

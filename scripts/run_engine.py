@@ -18,7 +18,7 @@ REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from runner.engine import FeistbackEngine
+from runtime.engine import FeistbackEngine
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/pure_feistel_raf_clean.pt",
+        default="models/logic_feistel_clean/pure_feistel_raf_clean.pt",
         help="Path to trained checkpoint (.pt)",
     )
     parser.add_argument(

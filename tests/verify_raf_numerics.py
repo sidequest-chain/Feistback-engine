@@ -14,10 +14,7 @@ REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-try:
-    from runtime.models.associative_memory import AssociativeMemoryBlock
-except ImportError:
-    from core.associative_memory import AssociativeMemoryBlock
+from runtime.models.associative_memory import AssociativeMemoryBlock
 
 
 def main() -> None:

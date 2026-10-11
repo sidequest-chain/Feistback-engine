@@ -10,10 +10,7 @@ import math
 import re
 from typing import Any, Dict, List, Optional
 
-try:
-    from runtime.vm.opcodes import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
-except ImportError:
-    from mini_vm.ops import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
+from runtime.vm.opcodes import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
 
 
 class RuntimeExecutionError(RuntimeError):

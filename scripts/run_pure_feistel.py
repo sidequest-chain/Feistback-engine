@@ -23,7 +23,7 @@ if REPO_ROOT not in sys.path:
 
 import torch
 
-from core.pure_feistel_lm import PureFeistelLM
+from runtime.models.pure_feistel_lm import PureFeistelLM
 
 
 def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="checkpoints/pure_feistel_final.pt",
+        default="models/logic_feistel_clean/pure_feistel_raf_clean.pt",
         help="Path to trained checkpoint file (.pt)",
     )
     parser.add_argument(
@@ -172,7 +172,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--vocab_map",
         type=str,
-        default="checkpoints/vocab_16k/vocab_map.pt",
+        default="models/logic_feistel_clean/vocab_16k/vocab_map.pt",
         help="Path to vocab_map.pt for 16k vocab",
     )
     parser.add_argument(
@@ -248,7 +248,7 @@ def main() -> None:
         torch_dtype=torch.bfloat16,
         device=device,
         from_pretrained_qwen=(target_vocab_size != 16384),
-        pruned_weights_path="checkpoints/vocab_16k/pruned_weights.pt",
+        pruned_weights_path="models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
         vocab_map_path=args.vocab_map,
     )
 

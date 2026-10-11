@@ -190,7 +190,7 @@ class CodeDistillationDataset(Dataset):
         seq_len: int = 256,
         min_samples: int = 1500,
         vocab_size: int = 151936,
-        vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
+        vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
     ) -> None:
         self.seq_len = seq_len
         self.tokenizer = tokenizer

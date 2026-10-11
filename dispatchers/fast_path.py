@@ -19,10 +19,7 @@ from dispatchers.base import (
     is_synthesis_query,
 )
 
-try:
-    from runtime.engine import FeistbackEngine, EngineResult
-except ImportError:
-    from runner.engine import FeistbackEngine, EngineResult
+from runtime.engine import FeistbackEngine, EngineResult
 
 try:
     from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code

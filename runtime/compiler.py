@@ -11,10 +11,7 @@ from __future__ import annotations
 import ast
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    from runtime.vm.opcodes import OpCode
-except ImportError:
-    from mini_vm.ops import OpCode
+from runtime.vm.opcodes import OpCode
 
 
 class ASTCompiler:

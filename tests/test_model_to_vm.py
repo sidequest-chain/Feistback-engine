@@ -37,8 +37,6 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     checkpoint_path = "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
-    if not os.path.exists(checkpoint_path):
-        checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print("=" * 80)
@@ -59,8 +57,8 @@ def main() -> None:
         torch_dtype=torch.bfloat16,
         device=device,
         from_pretrained_qwen=False,
-        pruned_weights_path="checkpoints/vocab_16k/pruned_weights.pt",
-        vocab_map_path="checkpoints/vocab_16k/vocab_map.pt",
+        pruned_weights_path="models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
+        vocab_map_path="models/logic_feistel_clean/vocab_16k/vocab_map.pt",
     )
     ckpt = torch.load(checkpoint_path, map_location=device)
     model.load_backbone(ckpt)

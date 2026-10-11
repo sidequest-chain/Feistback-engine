@@ -31,8 +31,6 @@ def main():
 
     checkpoint_path = "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
     if not os.path.exists(checkpoint_path):
-        checkpoint_path = "checkpoints/pure_feistel_raf_clean.pt"
-    if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
 
     print(f"[1/2] Loading FeistbackEngine from {checkpoint_path}...")

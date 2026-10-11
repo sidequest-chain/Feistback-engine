@@ -40,7 +40,7 @@ class PrunedVocabMap:
     and pruned 16k token IDs (0..16383).
     """
 
-    def __init__(self, vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt") -> None:
+    def __init__(self, vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt") -> None:
         data = torch.load(vocab_map_path, map_location="cpu")
         self.old_to_new: torch.Tensor = data["old_to_new"]
         self.new_to_old: torch.Tensor = data["new_to_old"]
@@ -149,7 +149,7 @@ def build_pruned_token_list(
 
 def prune_and_save_weights(
     selected_tokens: List[int],
-    output_dir: str = "checkpoints/vocab_16k",
+    output_dir: str = "models/logic_feistel_clean/vocab_16k",
     model_name: str = "Qwen/Qwen2.5-Coder-0.5B",
     d_model: int = HIDDEN_DIM,
 ) -> None:
@@ -218,7 +218,7 @@ def prune_and_save_weights(
 
 
 def verify_pruned_vocabulary(
-    vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
+    vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
     model_name: str = "Qwen/Qwen2.5-Coder-0.5B",
 ) -> None:
     """
@@ -275,7 +275,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Prune Qwen vocabulary to 16,384 tokens")
     parser.add_argument("--data_path", type=str, default="data/train_code.jsonl", help="Dataset path")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-Coder-0.5B", help="Base model name")
-    parser.add_argument("--output_dir", type=str, default="checkpoints/vocab_16k", help="Output directory")
+    parser.add_argument("--output_dir", type=str, default="models/logic_feistel_clean/vocab_16k", help="Output directory")
     parser.add_argument("--target_vocab_size", type=int, default=TARGET_VOCAB_SIZE, help="Target vocabulary size")
     args = parser.parse_args()
 

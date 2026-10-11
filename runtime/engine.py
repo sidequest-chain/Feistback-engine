@@ -18,14 +18,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-try:
-    from runtime.models.pure_feistel_lm import PureFeistelLM
-    from runtime.compiler import ASTCompiler
-    from runtime.vm.ministack_vm import MiniStackVM
-except ImportError:
-    from core.pure_feistel_lm import PureFeistelLM
-    from mini_vm.compiler import ASTCompiler
-    from mini_vm.vm import MiniStackVM
+from runtime.models.pure_feistel_lm import PureFeistelLM
+from runtime.compiler import ASTCompiler
+from runtime.vm.ministack_vm import MiniStackVM
 
 try:
     from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
@@ -89,16 +84,16 @@ class FeistbackEngine:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str = "checkpoints/pure_feistel_raf_clean.pt",
+        checkpoint_path: str = "models/logic_feistel_clean/pure_feistel_raf_clean.pt",
         device: Optional[str] = None,
-        vocab_map_path: str = "checkpoints/vocab_16k/vocab_map.pt",
-        pruned_weights_path: str = "checkpoints/vocab_16k/pruned_weights.pt",
+        vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
+        pruned_weights_path: str = "models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
     ) -> "FeistbackEngine":
         """
         Instantiates FeistbackEngine from trained weights.
         """
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        # Canonical path resolution (prefer models/ with fallback to checkpoints/)
+        # Canonical path resolution within models/
         if not os.path.exists(checkpoint_path):
             alt_path = os.path.join("models", "logic_feistel_clean", "pure_feistel_raf_clean.pt")
             if os.path.exists(alt_path):

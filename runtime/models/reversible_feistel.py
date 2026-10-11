@@ -21,7 +21,7 @@ from typing import Callable, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from core.holographic_mixer import functional_holographic_mixer, compute_param_len
+from runtime.models.holographic_mixer import functional_holographic_mixer, compute_param_len
 
 
 class ReversibleFeistelBlock(torch.autograd.Function):

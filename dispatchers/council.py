@@ -23,12 +23,8 @@ from dispatchers.base import (
     is_synthesis_query,
 )
 
-try:
-    from runtime.engine import FeistbackEngine, EngineResult
-    from runtime.models.pure_feistel_lm import PureFeistelLM
-except ImportError:
-    from runner.engine import FeistbackEngine, EngineResult
-    from core.pure_feistel_lm import PureFeistelLM
+from runtime.engine import FeistbackEngine, EngineResult
+from runtime.models.pure_feistel_lm import PureFeistelLM
 
 
 class CouncilDispatcher(BaseDispatcher):

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -30,11 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Interactive natural language chat with Feistback neuro-symbolic engine"
     )
-    default_ckpt = (
-        "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
-        if os.path.exists("models/logic_feistel_clean/pure_feistel_raf_clean.pt")
-        else "checkpoints/pure_feistel_raf_clean.pt"
-    )
+    default_ckpt = "models/logic_feistel_clean/pure_feistel_raf_clean.pt"
     parser.add_argument(
         "--checkpoint",
         type=str,
