@@ -32,11 +32,11 @@ git commit -s -F commit_msg.txt
 
 ---
 
-## 3. Tiered Commit Guidelines
+## 3. Commit Guidelines ("Not What, But Why" - NWBW)
 
-To maintain an auditable technical history, commits are structured using the Tiered Commit System:
+To maintain a clean and auditable technical history, commits follow the **"Not What, But Why" (NWBW)** protocol built on Conventional Commits:
 
-* **Tier 1 (Lite NWBW):** Bug fixes, dependencies, documentation, formatting, tests:
+* **Standard Commits:**
   ```text
   fix(parser): prevent infinite loop on unclosed quotes
 
@@ -46,17 +46,14 @@ To maintain an auditable technical history, commits are structured using the Tie
   Signed-off-by: Developer Name <developer@example.com>
   ```
 
-* **Tier 2 (Full HIDC):** Performance optimizations, core architectural additions, and algorithm rewrites:
+* **Context-Enriched Commits (Optional for Architectural Decisions):**
   ```text
   perf(engine): replace 1D linear recurrence with 2D associative matrix memory
 
   The 1D recurrence encountered interference saturation when tracking multiple
   program variables simultaneously, bounding cross-entropy at 6.84.
 
-  Hypothesis: Outer-product fast weights eliminate variable crosstalk and drop CE below 0.10.
-  Invariant: Inference KV-cache must remain identically zero bytes (O(1) memory).
-  Rejected: Quadratic attention -> Exceeds edge memory limits and breaks O(1) inference constraint.
-  Reconsider-When: Never; zero KV-cache is a foundational constraint of this engine.
+  Context: 2D outer-product fast weights maintain an O(1) inference footprint with zero KV-cache while eliminating relational crosstalk.
   Signed-off-by: Developer Name <developer@example.com>
   ```
 
