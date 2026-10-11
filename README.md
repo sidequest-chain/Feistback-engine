@@ -36,7 +36,7 @@ Rather than building another monolithic, multi-billion parameter "jack-of-all-tr
 Modern auto-regressive Transformers (LLaMA, Mistral, Qwen, GPT-4) scale quadratically in computational complexity with sequence length $\mathcal{O}(N^2)$ during prefill and require a linearly growing Key-Value cache during auto-regressive generation:
 
 $$
-\text{Memory}_{\text{KV}} = 2 \times B \times L \times N_{\text{layers}} \times D_{\text{head}} \times N_{\text{kv\_heads}} \times \text{bytes\_per\_elem}
+\text{Memory}_{\text{KV}} = 2 \times B \times L \times N_{\text{layers}} \times D_{\text{head}} \times N_{\text{kv}} \times \text{bytes per element}
 $$
 
 For high-concurrency serving or resource-constrained edge hardware, the KV-cache consumes gigabytes of VRAM per session, causing severe memory fragmentation and memory-bandwidth bottlenecks.
@@ -221,26 +221,26 @@ RAF resolves relational interference by expanding the hidden state into a set of
 
 For each head $h$:
 
-1. **Key, Value, and Retention Gate Projections:**
+**1. Key, Value, and Retention Gate Projections:**
 
-   $$
-   k_t = W_k x_t \in \mathbb{R}^K, \quad v_t = W_v x_t \in \mathbb{R}^V, \quad \beta_t = \sigma(W_\beta x_t + b_\beta) \in (0, 1)
-   $$
+$$
+k_t = W_k x_t \in \mathbb{R}^K, \quad v_t = W_v x_t \in \mathbb{R}^V, \quad \beta_t = \sigma(W_\beta x_t + b_\beta) \in (0, 1)
+$$
 
-2. **Associative Memory Update (Decaying Outer Product):**
+**2. Associative Memory Update (Decaying Outer Product):**
 
-   $$
-   M_t^{(h)} = \beta_t \cdot M_{t-1}^{(h)} + (1 - \beta_t) \cdot (k_t \otimes v_t)
-   $$
+$$
+M_t^{(h)} = \beta_t \cdot M_{t-1}^{(h)} + (1 - \beta_t) \cdot (k_t \otimes v_t)
+$$
 
-   where $k_t \otimes v_t = k_t v_t^T \in \mathbb{R}^{K \times V}$.
+where $k_t \otimes v_t = k_t v_t^T \in \mathbb{R}^{K \times V}$.
 
-3. **Memory Retrieval:**
-   Given a query projection $q_t = W_q x_t \in \mathbb{R}^K$:
+**3. Memory Retrieval:**
+Given a query projection $q_t = W_q x_t \in \mathbb{R}^K$:
 
-   $$
-   y_t^{(h)} = q_t \cdot M_t^{(h)} \in \mathbb{R}^V
-   $$
+$$
+y_t^{(h)} = q_t \cdot M_t^{(h)} \in \mathbb{R}^V
+$$
 
 #### Dual Mode Parity (Parallel Scan vs. $\mathcal{O}(1)$ Recurrent Step)
 

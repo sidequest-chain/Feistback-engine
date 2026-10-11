@@ -1,0 +1,14 @@
+{
+  "name": "eesti_keele_sl2ng",
+  "role": "language_expert",
+  "weights": "slang_expert_feistel.pt",
+  "tokenizer": "tokenizer.json",
+  "vocab_size": 1327,
+  "d_model": 512,
+  "num_layers": 12,
+  "max_seq_len": 128,
+  "memory_type": "raf",
+  "num_heads": 4,
+  "key_dim": 16,
+  "value_dim": 16
+}

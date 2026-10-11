@@ -21,6 +21,7 @@ import torch
 from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.compiler import ASTCompiler
 from runtime.vm.ministack_vm import MiniStackVM
+from runtime.registry import ModelRegistry
 
 try:
     from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
@@ -82,17 +83,44 @@ class FeistbackEngine:
         self.device = device
 
     @classmethod
+    def from_registry(
+        cls,
+        model_name: str = "logic_feistel_clean",
+        device: Optional[str] = None,
+        registry: Optional[ModelRegistry] = None,
+    ) -> "FeistbackEngine":
+        """
+        Instantiates FeistbackEngine using declarative model configuration from ModelRegistry.
+        """
+        reg = registry or ModelRegistry()
+        dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        model, _ = reg.load_model(model_name, device=dev)
+        compiler = ASTCompiler()
+        vm = MiniStackVM()
+        return cls(model=model, compiler=compiler, vm=vm, device=dev)
+
+    @classmethod
     def from_checkpoint(
         cls,
         checkpoint_path: str = "models/logic_feistel_clean/pure_feistel_raf_clean.pt",
         device: Optional[str] = None,
         vocab_map_path: str = "models/logic_feistel_clean/vocab_16k/vocab_map.pt",
         pruned_weights_path: str = "models/logic_feistel_clean/vocab_16k/pruned_weights.pt",
+        registry: Optional[ModelRegistry] = None,
     ) -> "FeistbackEngine":
         """
-        Instantiates FeistbackEngine from trained weights.
+        Instantiates FeistbackEngine from trained weights, resolving via ModelRegistry when possible.
         """
+        reg = registry or ModelRegistry()
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Resolve via registry if matching a known registered model
+        for m in reg.list_models():
+            cfg = reg.get_config(m["name"])
+            m_weights = os.path.basename(cfg.get("weights", ""))
+            if os.path.basename(checkpoint_path) == m_weights or m["name"] in checkpoint_path:
+                return cls.from_registry(m["name"], device=dev, registry=reg)
+
         # Canonical path resolution within models/
         if not os.path.exists(checkpoint_path):
             alt_path = os.path.join("models", "logic_feistel_clean", "pure_feistel_raf_clean.pt")

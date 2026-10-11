@@ -18,14 +18,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from tokenizers import Tokenizer
 
-from dispatchers.base import (
-    BaseDispatcher,
+from dispatchers.base import BaseDispatcher
+from dispatchers.parsers.et_numbers import (
     extract_numbers,
     is_synthesis_query,
 )
 
 from runtime.engine import FeistbackEngine, EngineResult
 from runtime.models.pure_feistel_lm import PureFeistelLM
+from runtime.registry import ModelRegistry
 
 
 # Tier 3 Kernel Fusion templates for compound arithmetic routines synthesized by Language Expert
@@ -68,12 +69,16 @@ class CouncilDispatcher(BaseDispatcher):
     def __init__(
         self,
         engine: FeistbackEngine,
-        model_path: str = "models/eesti_keele_sl2ng/slang_expert_feistel.pt",
-        tokenizer_path: str = "models/eesti_keele_sl2ng/tokenizer.json",
+        model_name: str = "eesti_keele_sl2ng",
+        registry: Optional[ModelRegistry] = None,
+        model_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
         device: Optional[str] = None,
     ) -> None:
         self.engine = engine
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.registry = registry or ModelRegistry()
+        self.model_name = model_name
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
         self.expert_model: Optional[PureFeistelLM] = None
@@ -82,17 +87,18 @@ class CouncilDispatcher(BaseDispatcher):
         self._load_expert()
 
     def _load_expert(self) -> None:
-        """Loads eesti_keele_sl2ng micro-model weights and tokenizer."""
-        mp = Path(self.model_path)
-        if not mp.is_absolute():
-            mp = Path(__file__).resolve().parent.parent / self.model_path
-
-        tp = Path(self.tokenizer_path)
-        if not tp.is_absolute():
-            tp = Path(__file__).resolve().parent.parent / self.tokenizer_path
-
-        if mp.exists() and tp.exists():
-            try:
+        """Loads eesti_keele_sl2ng micro-model weights and tokenizer via ModelRegistry."""
+        try:
+            if self.model_name in self.registry._models:
+                self.expert_model, _ = self.registry.load_model(self.model_name, device=self.device)
+                self.expert_tokenizer = self.registry.load_tokenizer(self.model_name)
+            elif self.model_path and self.tokenizer_path:
+                mp = Path(self.model_path)
+                if not mp.is_absolute():
+                    mp = Path(__file__).resolve().parent.parent / self.model_path
+                tp = Path(self.tokenizer_path)
+                if not tp.is_absolute():
+                    tp = Path(__file__).resolve().parent.parent / self.tokenizer_path
                 self.expert_tokenizer = Tokenizer.from_file(str(tp))
                 ckpt = torch.load(mp, map_location=self.device)
                 cfg = ckpt.get("config", {})
@@ -111,9 +117,10 @@ class CouncilDispatcher(BaseDispatcher):
                 )
                 self.expert_model.load_state_dict(ckpt["model_state_dict"])
                 self.expert_model.eval()
-            except Exception as e:
-                print(f"Warning: Failed to load eesti_keele_sl2ng expert: {e}")
-                self.expert_model = None
+        except Exception as e:
+            print(f"Warning: Failed to load eesti_keele_sl2ng expert: {e}")
+            self.expert_model = None
+            self.expert_tokenizer = None
 
     def predict_contract(self, user_query: str) -> Optional[Dict[str, Any]]:
         """Invokes eesti_keele_sl2ng micro-model to generate structured contract JSON."""

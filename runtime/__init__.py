@@ -9,6 +9,7 @@ from runtime.compiler import ASTCompiler
 from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
 from runtime.vm.opcodes import OpCode
 from runtime.models.pure_feistel_lm import PureFeistelLM
+from runtime.registry import ModelRegistry
 
 __all__ = [
     "FeistbackEngine",
@@ -19,4 +20,5 @@ __all__ = [
     "RuntimeExecutionError",
     "OpCode",
     "PureFeistelLM",
+    "ModelRegistry",
 ]

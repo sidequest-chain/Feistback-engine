@@ -1,0 +1,16 @@
+{
+  "name": "logic_feistel_clean",
+  "role": "logic_expert",
+  "weights": "pure_feistel_raf_clean.pt",
+  "pruned_weights": "vocab_16k/pruned_weights.pt",
+  "vocab_map": "vocab_16k/vocab_map.pt",
+  "vocab_size": 16384,
+  "d_model": 896,
+  "num_layers": 12,
+  "state_dim": 128,
+  "max_seq_len": 512,
+  "memory_type": "raf",
+  "num_heads": 4,
+  "key_dim": 16,
+  "value_dim": 16
+}

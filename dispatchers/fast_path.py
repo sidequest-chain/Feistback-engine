@@ -13,8 +13,8 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from dispatchers.base import (
-    BaseDispatcher,
+from dispatchers.base import BaseDispatcher
+from dispatchers.parsers.et_numbers import (
     extract_numbers,
     is_synthesis_query,
 )
