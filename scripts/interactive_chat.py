@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to intents JSON configuration (default: config/intents.json)",
     )
     parser.add_argument(
+        "--dispatcher",
+        choices=["fast_path", "council"],
+        default="council",
+        help="Vali dispetšer: fast_path (reeglid) voi council (eesti_keele_sl2ng mikromudel)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -53,11 +59,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def print_banner(dispatcher: ConfigDispatcher, device: str) -> None:
+def print_banner(dispatcher: Any, device: str) -> None:
     print("=" * 80)
     print("FEISTBACK NEURO-SYMBOLIC CHAT CLI")
     print("=" * 80)
-    print(f"Device: {device} | Registered Intents: {len(dispatcher.intents)}")
+    if hasattr(dispatcher, "intents"):
+        disp_info = f"Registered Intents: {len(dispatcher.intents)}"
+    else:
+        disp_info = "Micro-Model: eesti_keele_sl2ng (Neural Council)"
+    print(f"Device: {device} | Dispatcher: {dispatcher.__class__.__name__} ({disp_info})")
     print("Type a natural language or 'estengrish' query (or 'quit'/'exit' to exit).")
     print("Example queries:")
     print("  - 'liida kokku 15 ja 25'")
@@ -65,11 +75,12 @@ def print_banner(dispatcher: ConfigDispatcher, device: str) -> None:
     print("  - 'arvuta vahe ruut arvudel 15 ja 8 ja liida üks otsa'")
     print("  - 'viska xor 12 ja 4 vahel'")
     print("  - 'kas number -7 on negatiivne'")
+    print("  - 'liida kolm arvu 1, 5 ja 6 lahuta sellest 2'")
     print("=" * 80)
 
 
 def process_query(
-    dispatcher: ConfigDispatcher,
+    dispatcher: Any,
     query: str,
     pending_intent: Optional[Dict[str, Any]] = None,
     pending_args: Optional[List[int]] = None,
@@ -159,7 +170,15 @@ def main() -> None:
 
     print(f"Initializing FeistbackEngine on {args.device}...")
     engine = FeistbackEngine.from_checkpoint(args.checkpoint, device=args.device)
-    dispatcher = ConfigDispatcher(engine, config_path=args.config)
+    if args.dispatcher == "council":
+        dispatcher = CouncilDispatcher(
+            engine,
+            model_path="models/eesti_keele_sl2ng/slang_expert_feistel.pt",
+            tokenizer_path="models/eesti_keele_sl2ng/tokenizer.json",
+            device=args.device,
+        )
+    else:
+        dispatcher = ConfigDispatcher(engine, config_path=args.config)
 
     print_banner(dispatcher, args.device)
 
@@ -184,6 +203,12 @@ def main() -> None:
 
             query = user_input.strip().lstrip("\ufeff")
             if not query:
+                continue
+
+            if pending_intent is not None and query.lower() in ("tühista", "cancel", "exit"):
+                print("\n  Dispetšer > Ootel päring tühistatud.\n")
+                pending_intent = None
+                pending_args = []
                 continue
 
             if query.lower() in ("exit", "quit", "q"):

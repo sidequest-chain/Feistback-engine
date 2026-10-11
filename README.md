@@ -32,8 +32,13 @@ Rather than building another monolithic, multi-billion parameter "jack-of-all-tr
 ## 2. What Problem Are We Solving?
 
 ### The KV-Cache Memory Wall
+
 Modern auto-regressive Transformers (LLaMA, Mistral, Qwen, GPT-4) scale quadratically in computational complexity with sequence length $\mathcal{O}(N^2)$ during prefill and require a linearly growing Key-Value cache during auto-regressive generation:
-$$\text{Memory}_{\text{KV}} = 2 \times B \times L \times N_{\text{layers}} \times D_{\text{head}} \times N_{\text{kv\_heads}} \times \text{bytes\_per\_elem}$$
+
+$$
+\text{Memory}_{\text{KV}} = 2 \times B \times L \times N_{\text{layers}} \times D_{\text{head}} \times N_{\text{kv\_heads}} \times \text{bytes\_per\_elem}
+$$
+
 For high-concurrency serving or resource-constrained edge hardware, the KV-cache consumes gigabytes of VRAM per session, causing severe memory fragmentation and memory-bandwidth bottlenecks.
 
 ### The Stochastic Hallucination Problem
@@ -158,21 +163,39 @@ Feistback replaces transformer self-attention with three foundational mathematic
 In standard deep networks, intermediate activations for all layers must be stored in memory during the forward pass to compute gradients during backpropagation, resulting in $\mathcal{O}(N_{\text{layers}} \times D \times L)$ activation memory.
 
 Feistback partitions hidden activations into two symmetric halves $x_t = [L_t, R_t] \in \mathbb{R}^{d_{\text{model}} / 2} \times \mathbb{R}^{d_{\text{model}} / 2}$. Each Feistel block computes:
-$$L_{i+1} = R_i$$
-$$R_{i+1} = L_i + \gamma \cdot \mathcal{F}(R_i, S_i)$$
+
+$$
+\begin{aligned}
+L_{i+1} &= R_i \\
+R_{i+1} &= L_i + \gamma \cdot \mathcal{F}(R_i, S_i)
+\end{aligned}
+$$
+
 where $\gamma = 0.05$ is a residual contraction scale factor, and $\mathcal{F}$ is the non-linear round function.
 
 **Exact Analytic Inverse:**
+
 During backpropagation, activations of layer $i$ are reconstructed in reverse directly from layer $i+1$ without caching:
-$$R_i = L_{i+1}$$
-$$L_i = R_{i+1} - \gamma \cdot \mathcal{F}(L_{i+1}, S_i)$$
+
+$$
+\begin{aligned}
+R_i &= L_{i+1} \\
+L_i &= R_{i+1} - \gamma \cdot \mathcal{F}(L_{i+1}, S_i)
+\end{aligned}
+$$
+
 This guarantees **$\mathcal{O}(1)$ activation memory** during training regardless of network depth.
 
 ---
 
 ### 5.2 Circular Holographic Mixing (Spectral Convolution)
+
 Instead of pairwise token-to-token attention matrices $QK^T$, sequential mixing is achieved in the frequency domain through circular convolution:
-$$\mathcal{F}_{\text{spectral}}(R) = \text{iFFT}\left(\text{FFT}(R) \odot W_{\text{spectral}}\right)$$
+
+$$
+\mathcal{F}_{\text{spectral}}(R) = \text{iFFT}\left(\text{FFT}(R) \odot W_{\text{spectral}}\right)
+$$
+
 where:
 - $\text{FFT}$ and $\text{iFFT}$ are Fast Fourier Transforms along the sequence dimension;
 - $W_{\text{spectral}} \in \mathbb{C}^{D/2 \times K}$ is a parameterized complex filter;
@@ -181,25 +204,46 @@ where:
 ---
 
 ### 5.3 Reversible Associative Feistel (RAF v2)
+
 #### Why 1D Linear Recurrence Failed (Interference Saturation)
+
 Early versions of `PureFeistelLM` utilized 1D scalar linear recurrence:
-$$s_t = \alpha_t \odot s_{t-1} + (1 - \alpha_t) \odot \mathcal{F}(x_t)$$
+
+$$
+s_t = \alpha_t \odot s_{t-1} + (1 - \alpha_t) \odot \mathcal{F}(x_t)
+$$
+
 Because $s_t \in \mathbb{R}^{D}$ is a single 1D vector, incoming token features were linearly accumulated into the same vector space. When tracking multiple program variables simultaneously (e.g. `u`, `v`, `w`), vector addition caused catastrophic **relational interference saturation**, trapping the model at an inelastic cross-entropy ceiling of $\text{CE} \approx 6.84$.
 
 #### 2D Associative Outer-Product Fast Weights
+
 RAF resolves relational interference by expanding the hidden state into a set of 2D matrix associative fast-weights $M_t^{(h)} \in \mathbb{R}^{K \times V}$ across $H$ heads ($H=4, K=16, V=16$).
 
 For each head $h$:
+
 1. **Key, Value, and Retention Gate Projections:**
-   $$k_t = W_k x_t \in \mathbb{R}^K, \quad v_t = W_v x_t \in \mathbb{R}^V, \quad \beta_t = \sigma(W_\beta x_t + b_\beta) \in (0, 1)$$
+
+   $$
+   k_t = W_k x_t \in \mathbb{R}^K, \quad v_t = W_v x_t \in \mathbb{R}^V, \quad \beta_t = \sigma(W_\beta x_t + b_\beta) \in (0, 1)
+   $$
+
 2. **Associative Memory Update (Decaying Outer Product):**
-   $$M_t^{(h)} = \beta_t \cdot M_{t-1}^{(h)} + (1 - \beta_t) \cdot (k_t \otimes v_t)$$
+
+   $$
+   M_t^{(h)} = \beta_t \cdot M_{t-1}^{(h)} + (1 - \beta_t) \cdot (k_t \otimes v_t)
+   $$
+
    where $k_t \otimes v_t = k_t v_t^T \in \mathbb{R}^{K \times V}$.
+
 3. **Memory Retrieval:**
    Given a query projection $q_t = W_q x_t \in \mathbb{R}^K$:
-   $$y_t^{(h)} = q_t \cdot M_t^{(h)} \in \mathbb{R}^V$$
+
+   $$
+   y_t^{(h)} = q_t \cdot M_t^{(h)} \in \mathbb{R}^V
+   $$
 
 #### Dual Mode Parity (Parallel Scan vs. $\mathcal{O}(1)$ Recurrent Step)
+
 - **Training Mode:** Executed via parallel cumulative operations on GPUs, achieving $\sim 28,000 - 40,000\text{ tokens/sec}$ throughput.
 - **Inference Mode:** Executed token-by-token using the $\mathcal{O}(1)$ recurrent state equation.
 - **Numerical Equivalence:** Parity verification tests confirm the difference between parallel training outputs and recurrent step outputs is bounded below $2.69 \times 10^{-7}$, well within numerical tolerance.

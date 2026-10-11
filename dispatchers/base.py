@@ -78,6 +78,10 @@ SYNTHESIS_PATTERNS = [
 
 _WORDS_REGEX = "|".join(re.escape(w) for w in sorted(ESTONIAN_WORDS_TO_INT.keys(), key=len, reverse=True))
 _NUMBER_PATTERN = re.compile(rf"(?:0x[0-9a-fA-F]+|-?\d+|\b(?:{_WORDS_REGEX})\b)", re.IGNORECASE)
+_QUANTIFIER_PATTERN = re.compile(
+    rf"\b(?:{_WORDS_REGEX}|\d+)\s+(?:arvu|arvud|arvude|arvudel|numbrit|numbrid|numbrite|numbritel|tükki|väärtust)\b",
+    re.IGNORECASE,
+)
 
 
 def is_synthesis_query(text: str) -> bool:
@@ -90,8 +94,10 @@ def extract_numbers(text: str) -> List[int]:
     """
     Extracts integer values (including negative numbers, hex format, and
     Estonian number words) from a raw query string in strict left-to-right order.
+    Filters out numeral quantifiers modifying count nouns (e.g. 'kolm arvu', 'kaks numbrit').
     """
-    matches = _NUMBER_PATTERN.findall(text)
+    cleaned_text = _QUANTIFIER_PATTERN.sub(" ", text)
+    matches = _NUMBER_PATTERN.findall(cleaned_text)
     numbers: List[int] = []
     for m in matches:
         m_lower = m.lower()
