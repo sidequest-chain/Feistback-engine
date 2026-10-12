@@ -8,7 +8,8 @@ mathematical accuracy. Pure Python implementation with zero PyTorch dependencies
 import json
 import math
 import re
-from typing import Any, Dict, List, Optional
+import struct
+from typing import Any, Dict, List, Optional, Union
 
 from runtime.vm.opcodes import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
 
@@ -77,6 +78,19 @@ class MiniStackVM:
                 ip += 1
                 stack.append(val)
 
+            elif op == OpCode.PUSH_FLOAT:
+                if isinstance(bytecode, (bytes, bytearray)):
+                    if ip + 8 > n:
+                        raise IndexError("PUSH_FLOAT requires 8-byte IEEE-754 operand!")
+                    val = struct.unpack("<d", bytecode[ip:ip+8])[0]
+                    ip += 8
+                else:
+                    if ip >= n:
+                        raise IndexError("PUSH_FLOAT requires constant value operand!")
+                    val = float(bytecode[ip])
+                    ip += 1
+                stack.append(val)
+
             elif op == OpCode.DUP:
                 if not stack:
                     raise RuntimeError("DUP: stack is empty!")
@@ -108,14 +122,27 @@ class MiniStackVM:
                     raise RuntimeError("DIV requires at least 2 stack elements!")
                 b = stack.pop()
                 a = stack.pop()
-                stack.append(a // b if b != 0 else 0)
+                if b == 0 or b == 0.0:
+                    raise ZeroDivisionError("integer division by zero in MiniStackVM DIV")
+                stack.append(int(a) // int(b))
+
+            elif op == OpCode.FDIV:
+                if len(stack) < 2:
+                    raise RuntimeError("FDIV requires at least 2 stack elements!")
+                b = stack.pop()
+                a = stack.pop()
+                if b == 0 or b == 0.0:
+                    raise ZeroDivisionError("float division by zero in MiniStackVM FDIV")
+                stack.append(float(a) / float(b))
 
             elif op == OpCode.MOD:
                 if len(stack) < 2:
                     raise RuntimeError("MOD requires at least 2 stack elements!")
                 b = stack.pop()
                 a = stack.pop()
-                stack.append(a % b if b != 0 else 0)
+                if b == 0 or b == 0.0:
+                    raise ZeroDivisionError("modulo by zero in MiniStackVM MOD")
+                stack.append(a % b)
 
             elif op == OpCode.CMP_GT:
                 if len(stack) < 2:
@@ -402,6 +429,30 @@ class MiniStackVM:
                     raise NameError(f"Local variable index {local_idx} referenced before assignment!")
                 stack.append(locals_store[local_idx])
 
+            elif op == OpCode.FLOAT:
+                if not stack:
+                    raise RuntimeError("FLOAT requires at least 1 stack element!")
+                a = stack.pop()
+                stack.append(float(a))
+
+            elif op == OpCode.ROUND:
+                if not stack:
+                    raise RuntimeError("ROUND requires at least 1 stack element!")
+                a = stack.pop()
+                stack.append(round(a))
+
+            elif op == OpCode.FLOOR:
+                if not stack:
+                    raise RuntimeError("FLOOR requires at least 1 stack element!")
+                a = stack.pop()
+                stack.append(math.floor(a))
+
+            elif op == OpCode.CEIL:
+                if not stack:
+                    raise RuntimeError("CEIL requires at least 1 stack element!")
+                a = stack.pop()
+                stack.append(math.ceil(a))
+
             elif op == OpCode.RET:
                 return stack.pop() if stack else 0
 
@@ -413,7 +464,7 @@ class MiniStackVM:
 
         return stack.pop() if stack else 0
 
-    def disassemble(self, bytecode: List[Any]) -> str:
+    def disassemble(self, bytecode: Union[List[Any], bytes, bytearray]) -> str:
         """Disassembles bytecode into human-readable assembly lines."""
         lines = []
         ip = 0
@@ -425,7 +476,22 @@ class MiniStackVM:
             ip += 1
             name = OPCODE_NAMES.get(op, f"UNK({op})")
 
-            if op in ARG_OPCODES:
+            if op == OpCode.PUSH_FLOAT:
+                if isinstance(bytecode, (bytes, bytearray)):
+                    if ip + 8 <= n:
+                        val = struct.unpack("<d", bytecode[ip:ip+8])[0]
+                        ip += 8
+                        lines.append(f"{addr:04d}: LOAD_CONST     {val}")
+                    else:
+                        lines.append(f"{addr:04d}: LOAD_CONST     ???")
+                else:
+                    if ip < n:
+                        val = bytecode[ip]
+                        ip += 1
+                        lines.append(f"{addr:04d}: LOAD_CONST     {val}")
+                    else:
+                        lines.append(f"{addr:04d}: LOAD_CONST     ???")
+            elif op in ARG_OPCODES:
                 if ip < n:
                     arg = bytecode[ip]
                     ip += 1
@@ -436,3 +502,116 @@ class MiniStackVM:
                 lines.append(f"{addr:04d}: {name}")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def assemble_mnemonics(mnemonics_str: str) -> bytes:
+        """
+        Translates mnemonic assembly text into MiniStackVM executable bytecode bytes.
+        Supports integer operands and IEEE-754 double precision floating-point constants.
+
+        Args:
+            mnemonics_str: Whitespace/newline delimited mnemonic string
+                           (e.g. 'LOAD_ARG 0 LOAD_CONST 2.5 MUL RET').
+
+        Returns:
+            bytes: MiniStackVM executable bytecode sequence.
+
+        Raises:
+            ValueError: If an unknown instruction or invalid operand is encountered.
+        """
+        # Aliases mapping alternative mnemonic names to canonical OpCodes
+        aliases: Dict[str, int] = {
+            "LOAD_CONST": OpCode.PUSH_CONST,
+            "PUSH_CONST": OpCode.PUSH_CONST,
+            "JUMP": OpCode.JMP,
+            "JMP": OpCode.JMP,
+            "JUMP_IF_FALSE": OpCode.JMP_IF_FALSE,
+            "JMP_IF_FALSE": OpCode.JMP_IF_FALSE,
+            "BRANCH_IF": OpCode.BRANCH_IF,
+            "LOAD_LOCAL": OpCode.LOAD_LOCAL,
+            "STORE_LOCAL": OpCode.STORE_LOCAL,
+            "LOAD_ARG": OpCode.LOAD_ARG,
+            "IDIV": OpCode.DIV,
+            "FDIV": OpCode.FDIV,
+            "FLOAT": OpCode.FLOAT,
+            "ROUND": OpCode.ROUND,
+            "FLOOR": OpCode.FLOOR,
+            "CEIL": OpCode.CEIL,
+            "PUSH_FLOAT": OpCode.PUSH_FLOAT,
+            "LOAD_FLOAT": OpCode.PUSH_FLOAT,
+        }
+
+        # Tokenize while ignoring comments (# ...) and optional address prefixes (e.g. '0000:')
+        cleaned_tokens: List[str] = []
+        for line in mnemonics_str.splitlines():
+            line = line.split("#")[0].strip()
+            if not line:
+                continue
+            for tok in line.split():
+                if tok.endswith(":") and tok[:-1].isdigit():
+                    continue
+                cleaned_tokens.append(tok)
+
+        bytecode_bytes = bytearray()
+        idx = 0
+        n = len(cleaned_tokens)
+
+        while idx < n:
+            tok = cleaned_tokens[idx]
+            idx += 1
+
+            op: Optional[int] = None
+            if tok in aliases:
+                op = aliases[tok]
+            elif tok in NAME_TO_OPCODE:
+                op = NAME_TO_OPCODE[tok]
+
+            if op is None:
+                raise ValueError(f"Unknown instruction mnemonic: '{tok}'")
+
+            bytecode_bytes.append(op)
+
+            if op in ARG_OPCODES or tok in (
+                "LOAD_ARG",
+                "LOAD_CONST",
+                "PUSH_CONST",
+                "LOAD_LOCAL",
+                "STORE_LOCAL",
+                "JUMP",
+                "JMP",
+                "JUMP_IF_FALSE",
+                "JMP_IF_FALSE",
+                "BRANCH_IF",
+                "PUSH_FLOAT",
+                "LOAD_FLOAT",
+            ):
+                if idx >= n:
+                    raise ValueError(f"Instruction '{tok}' requires an operand, but reached end of input!")
+                arg_tok = cleaned_tokens[idx]
+                idx += 1
+
+                if op == OpCode.PUSH_FLOAT or tok in ("LOAD_CONST", "PUSH_CONST", "PUSH_FLOAT", "LOAD_FLOAT"):
+                    is_float = False
+                    try:
+                        if "." in arg_tok or "e" in arg_tok.lower():
+                            fval = float(arg_tok)
+                            is_float = True
+                        else:
+                            ival = int(arg_tok)
+                    except ValueError:
+                        fval = float(arg_tok)
+                        is_float = True
+
+                    if is_float or op == OpCode.PUSH_FLOAT:
+                        bytecode_bytes[-1] = OpCode.PUSH_FLOAT
+                        bytecode_bytes.extend(struct.pack("<d", fval))
+                    else:
+                        bytecode_bytes.append(ival % 256)
+                else:
+                    try:
+                        val = int(arg_tok)
+                    except ValueError:
+                        raise ValueError(f"Expected integer operand for instruction '{tok}', got: '{arg_tok}'")
+                    bytecode_bytes.append(val % 256)
+
+        return bytes(bytecode_bytes)

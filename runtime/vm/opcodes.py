@@ -58,6 +58,14 @@ class OpCode:
     STORE_LOCAL = 37   # Argument: local_idx -> POP val, locals[local_idx] = val
     LOAD_LOCAL = 38    # Argument: local_idx -> PUSH locals[local_idx]
 
+    # Floating Point & Extended Scientific Mathematics
+    FDIV = 39          # POP b, POP a -> PUSH float(a) / float(b) (true division)
+    FLOAT = 40         # POP a -> PUSH float(a) (integer to float conversion)
+    ROUND = 41         # POP a -> PUSH round(a)
+    FLOOR = 42         # POP a -> PUSH math.floor(a)
+    CEIL = 43          # POP a -> PUSH math.ceil(a)
+    PUSH_FLOAT = 44    # Argument: 8-byte IEEE-754 float -> PUSH float_val
+
 
 OPCODE_NAMES: Dict[int, str] = {
     OpCode.NOP: "NOP",
@@ -99,9 +107,18 @@ OPCODE_NAMES: Dict[int, str] = {
     OpCode.SHR: "SHR",
     OpCode.STORE_LOCAL: "STORE_LOCAL",
     OpCode.LOAD_LOCAL: "LOAD_LOCAL",
+    OpCode.FDIV: "FDIV",
+    OpCode.FLOAT: "FLOAT",
+    OpCode.ROUND: "ROUND",
+    OpCode.FLOOR: "FLOOR",
+    OpCode.CEIL: "CEIL",
+    OpCode.PUSH_FLOAT: "PUSH_FLOAT",
 }
 
 NAME_TO_OPCODE: Dict[str, int] = {v: k for k, v in OPCODE_NAMES.items()}
+NAME_TO_OPCODE["IDIV"] = OpCode.DIV
+NAME_TO_OPCODE["LOAD_FLOAT"] = OpCode.PUSH_FLOAT
+
 ARG_OPCODES: Set[int] = {
     OpCode.LOAD_ARG,
     OpCode.PUSH_CONST,
@@ -110,4 +127,5 @@ ARG_OPCODES: Set[int] = {
     OpCode.JMP,
     OpCode.STORE_LOCAL,
     OpCode.LOAD_LOCAL,
+    OpCode.PUSH_FLOAT,
 }

@@ -136,7 +136,9 @@ class ASTCompiler:
             self.bytecode.append(OpCode.SUB)
         elif op_type is ast.Mult:
             self.bytecode.append(OpCode.MUL)
-        elif op_type in (ast.Div, ast.FloorDiv):
+        elif op_type is ast.Div:
+            self.bytecode.append(OpCode.FDIV)
+        elif op_type is ast.FloorDiv:
             self.bytecode.append(OpCode.DIV)
         elif op_type is ast.Mod:
             self.bytecode.append(OpCode.MOD)
@@ -262,7 +264,9 @@ class ASTCompiler:
             self.bytecode.append(OpCode.SUB)
         elif op_type is ast.Mult:
             self.bytecode.append(OpCode.MUL)
-        elif op_type in (ast.Div, ast.FloorDiv):
+        elif op_type is ast.Div:
+            self.bytecode.append(OpCode.FDIV)
+        elif op_type is ast.FloorDiv:
             self.bytecode.append(OpCode.DIV)
         elif op_type is ast.Mod:
             self.bytecode.append(OpCode.MOD)
@@ -364,6 +368,30 @@ class ASTCompiler:
                 raise ValueError("isqrt() requires exactly 1 argument!")
             self._compile_expr(node.args[0])
             self.bytecode.append(OpCode.ISQRT)
+
+        elif fn_name == "round":
+            if len(node.args) != 1:
+                raise ValueError("round() currently requires exactly 1 argument!")
+            self._compile_expr(node.args[0])
+            self.bytecode.append(OpCode.ROUND)
+
+        elif fn_name == "floor":
+            if len(node.args) != 1:
+                raise ValueError("floor() requires exactly 1 argument!")
+            self._compile_expr(node.args[0])
+            self.bytecode.append(OpCode.FLOOR)
+
+        elif fn_name == "ceil":
+            if len(node.args) != 1:
+                raise ValueError("ceil() requires exactly 1 argument!")
+            self._compile_expr(node.args[0])
+            self.bytecode.append(OpCode.CEIL)
+
+        elif fn_name == "float":
+            if len(node.args) != 1:
+                raise ValueError("float() requires exactly 1 argument!")
+            self._compile_expr(node.args[0])
+            self.bytecode.append(OpCode.FLOAT)
 
         else:
             raise NotImplementedError(f"Unsupported function call in VM: '{fn_name}'")
