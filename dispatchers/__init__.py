@@ -11,11 +11,13 @@ from dispatchers.base import (
     is_synthesis_query,
     extract_numbers,
 )
+from dispatchers.cache_manager import LearnedIntentCache
 from dispatchers.fast_path import ConfigDispatcher
 from dispatchers.council import CouncilDispatcher
 
 __all__ = [
     "BaseDispatcher",
+    "LearnedIntentCache",
     "ConfigDispatcher",
     "CouncilDispatcher",
     "ESTONIAN_WORDS_TO_INT",

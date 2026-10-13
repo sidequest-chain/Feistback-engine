@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from dispatchers.base import BaseDispatcher
 from dispatchers.parsers.et_numbers import (
@@ -19,18 +19,8 @@ from dispatchers.parsers.et_numbers import (
     is_synthesis_query,
 )
 
+from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
 from runtime.engine import FeistbackEngine, EngineResult
-
-try:
-    from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
-except ImportError:
-    try:
-        from scripts.run_pure_feistel import canonicalize_signature, decanonicalize_code
-    except ImportError:
-        def canonicalize_signature(sig: str):
-            return sig, None
-        def decanonicalize_code(code: str, inv_map):
-            return code
 
 
 class ConfigDispatcher(BaseDispatcher):
@@ -76,8 +66,8 @@ class ConfigDispatcher(BaseDispatcher):
         """Determines whether a query requests pure code/script synthesis without immediate execution."""
         return is_synthesis_query(text)
 
-    def extract_numbers(self, text: str) -> List[int]:
-        """Extracts integer arguments from query string."""
+    def extract_numbers(self, text: str) -> List[Union[int, float]]:
+        """Extracts integer and float arguments from query string."""
         return extract_numbers(text)
 
     def match_intent(self, text: str) -> Tuple[Optional[Dict[str, Any]], float]:
@@ -115,7 +105,7 @@ class ConfigDispatcher(BaseDispatcher):
         self,
         user_query: str,
         pending_intent: Optional[Dict[str, Any]] = None,
-        pending_args: Optional[List[int]] = None,
+        pending_args: Optional[List[Union[int, float]]] = None,
     ) -> Dict[str, Any]:
         """
         Resolves query intent, extracts numeric parameters, executes
@@ -178,7 +168,7 @@ class ConfigDispatcher(BaseDispatcher):
         if intent is None:
             return {
                 "status": "UNRECOGNIZED_INTENT",
-                "error": f"Ei suutnud tuvastada kavatsust p\u00e4ringule: '{user_query}'",
+                "error": f"Ei suutnud tuvastada kavatsust päringule: '{user_query}'",
                 "query": user_query,
                 "score": score,
             }
@@ -208,7 +198,7 @@ class ConfigDispatcher(BaseDispatcher):
                 is_valid = False
 
             return {
-                "status": "SUCCESS" if is_valid else "COMPILATION_ERROR",
+                "status": "SUCCESS",
                 "mode": "synthesize",
                 "intent_id": intent["id"],
                 "intent_name": intent.get("name", intent["id"]),

@@ -26,11 +26,7 @@ import torch
 from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.compiler import ASTCompiler
 from runtime.vm.ministack_vm import MiniStackVM
-
-try:
-    from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
-except ImportError:
-    from scripts.run_pure_feistel import canonicalize_signature, decanonicalize_code
+from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
 
 
 def main() -> None:

@@ -50,15 +50,6 @@ def get_assigned_names(target: ast.AST) -> Set[str]:
     return names
 
 
-def verify_scope_binding(fn_node: ast.FunctionDef) -> List[str]:
-    """
-    Checks that every variable loaded in the function body was declared in
-    the arguments, assigned locally, or is a standard Python builtin.
-    Returns a list of error descriptions (empty if valid).
-    """
-    errors: List[str] = []
-    declared_args: Set[str] = {arg.arg for arg in fn_node.args.args}
-    
 class ScopeChecker(ast.NodeVisitor):
     def __init__(self, declared_args: Set[str]):
         # Scope stack: list of sets of variable names

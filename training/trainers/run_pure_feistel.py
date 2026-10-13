@@ -8,13 +8,11 @@ and executes autoregressive code generation without KV-cache.
 from __future__ import annotations
 
 import argparse
-import ast
 import os
 from pathlib import Path
-import re
 import sys
 import time
-from typing import Dict, List, Tuple
+from typing import Dict
 
 # Ensure repository root is on sys.path
 REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
@@ -23,76 +21,8 @@ if REPO_ROOT not in sys.path:
 
 import torch
 
+from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
 from runtime.models.pure_feistel_lm import PureFeistelLM
-
-
-def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
-    """
-    Attempts to parse the function header in the prompt using `ast`.
-    If arguments are identified:
-      - 1 argument: maps to 'x' (unless already in known single pool).
-      - 2 arguments: maps to 'a', 'b'.
-      - 3 arguments: maps to 'u', 'v', 'w'.
-      - More arguments: preserved.
-    Replaces typed argument names with canonical ones (e.g. 'alpha: int' -> 'a: int').
-    Returns the canonicalized prompt and the inverse mapping dictionary (canonical -> original).
-    If parsing fails, returns the original prompt and an empty dict.
-    """
-    inv_map: Dict[str, str] = {}
-    known_single_vars = {"n", "x", "val", "num", "value", "a", "k", "item", "target", "elem"}
-
-    clean_p = prompt.strip()
-    try:
-        tree = ast.parse(clean_p + "\n    pass")
-    except SyntaxError:
-        return prompt, inv_map
-
-    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
-        return prompt, inv_map
-
-    fn_node = tree.body[0]
-    args = fn_node.args.args
-    if not args:
-        return prompt, inv_map
-
-    num_args = len(args)
-    if num_args == 1:
-        orig = args[0].arg
-        if orig in known_single_vars:
-            targets = [orig]
-        else:
-            targets = ["x"]
-    elif num_args == 2:
-        targets = ["a", "b"]
-    elif num_args == 3:
-        targets = ["u", "v", "w"]
-    else:
-        targets = [arg.arg for arg in args]
-
-    for arg, target in zip(args, targets):
-        if arg.arg != target:
-            inv_map[target] = arg.arg
-            arg.arg = target
-
-    if not inv_map:
-        return prompt, inv_map
-
-    canonical_header = ast.unparse(fn_node).split("\n")[0]
-    canonical_prompt = canonical_header + "\n" if prompt.endswith("\n") else canonical_header
-
-    return canonical_prompt, inv_map
-
-
-def decanonicalize_code(completion: str, inv_map: Dict[str, str]) -> str:
-    """
-    Replaces canonical variable names in the generated code body back to original prompt variable names.
-    Uses strict word boundaries to avoid partial word replacements.
-    """
-    if not inv_map:
-        return completion
-
-    pattern = re.compile(r"\b(" + "|".join(re.escape(k) for k in inv_map.keys()) + r")\b")
-    return pattern.sub(lambda m: inv_map[m.group(0)], completion)
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt",
         type=str,
-        default='def fibonacci(n: int) -> int:\n    """Return the n-th Fibonacci number."""\n',
+        default="def fibonacci(n: int) -> int:\n",
         help="Input prompt for code generation",
     )
     parser.add_argument(
@@ -192,7 +122,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
 
     # Detect vocab_size, num_layers, state_dim, and memory_type from checkpoint if present

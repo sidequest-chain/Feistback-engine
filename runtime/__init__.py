@@ -4,6 +4,7 @@ Feistback Core Runtime Package
 Couples PureFeistelLM neuro-symbolic execution with MiniStackVM and ASTCompiler.
 """
 
+from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
 from runtime.engine import FeistbackEngine, EngineResult, TestOutcome
 from runtime.compiler import ASTCompiler
 from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
@@ -21,4 +22,6 @@ __all__ = [
     "OpCode",
     "PureFeistelLM",
     "ModelRegistry",
+    "canonicalize_signature",
+    "decanonicalize_code",
 ]

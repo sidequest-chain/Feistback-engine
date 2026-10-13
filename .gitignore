@@ -54,6 +54,7 @@ venv.bak/
 # ML Checkpoints, Model Weights & Caches
 # ==========================================
 checkpoints/
+cache/
 *.pt
 *.pth
 *.bin

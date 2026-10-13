@@ -1,9 +1,11 @@
 """
-Council of Specialties Intent Dispatcher (Tier 2)
-=================================================
-Couples the specialized eesti_keele_sl2ng micro-model (semantic Estonian & IT-slang expert)
-with the PureFeistelLM code generation backbone and MiniStackVM execution sandbox.
-Provides conversational multi-turn slot filling, AST validation, and dynamic contract execution.
+Council of Specialties Intent Dispatcher (Tier 2 & Tier 1 L1 Cache)
+===================================================================
+Couples the Self-Hydrating L1 Intent Cache (`LearnedIntentCache`) and the specialized
+`eesti_keele_sl2ng` micro-model (semantic Estonian & IT-slang expert) with the
+PureFeistelLM code generation backbone and MiniStackVM execution sandbox.
+Provides conversational multi-turn slot filling, AST validation, Double-Lock VM
+verification gating, and dynamic contract execution.
 """
 
 from __future__ import annotations
@@ -13,12 +15,13 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from tokenizers import Tokenizer
 
 from dispatchers.base import BaseDispatcher
+from dispatchers.cache_manager import LearnedIntentCache
 from dispatchers.parsers.et_numbers import (
     extract_numbers,
     is_synthesis_query,
@@ -61,9 +64,9 @@ def get_expected_args_count(signature: str) -> int:
 
 class CouncilDispatcher(BaseDispatcher):
     """
-    CouncilDispatcher routes queries dynamically through the trained eesti_keele_sl2ng
-    micro-model to synthesize formal execution contracts, falling back to deterministic
-    number parsing and MiniStackVM execution.
+    CouncilDispatcher routes queries through the Tier 1 Self-Hydrating LRU Cache
+    and Tier 2 `eesti_keele_sl2ng` micro-model to synthesize formal execution contracts,
+    verifying execution on Tier 3 (`MiniStackVM`) before caching learned patterns.
     """
 
     def __init__(
@@ -73,6 +76,7 @@ class CouncilDispatcher(BaseDispatcher):
         registry: Optional[ModelRegistry] = None,
         model_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
+        cache_path: str = "cache/learned_intents.json",
         device: Optional[str] = None,
     ) -> None:
         self.engine = engine
@@ -81,6 +85,7 @@ class CouncilDispatcher(BaseDispatcher):
         self.model_name = model_name
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
+        self.learned_cache = LearnedIntentCache(cache_path=cache_path)
         self.expert_model: Optional[PureFeistelLM] = None
         self.expert_tokenizer: Optional[Tokenizer] = None
 
@@ -123,25 +128,42 @@ class CouncilDispatcher(BaseDispatcher):
             self.expert_tokenizer = None
 
     def predict_contract(self, user_query: str) -> Optional[Dict[str, Any]]:
-        """Invokes eesti_keele_sl2ng micro-model to generate structured contract JSON."""
+        """
+        Invokes eesti_keele_sl2ng micro-model using O(1) recurrent state stepping (L=1)
+        to generate structured contract JSON with zero KV-cache.
+        """
         if self.expert_model is None or self.expert_tokenizer is None:
             return None
 
         prompt_str = f"<|user|> {user_query} <|contract|>"
         prompt_ids = self.expert_tokenizer.encode(prompt_str).ids
-        curr_tensor = torch.tensor([prompt_ids], device=self.device, dtype=torch.long)
+        prompt_tensor = torch.tensor([prompt_ids], device=self.device, dtype=torch.long)
         eos_id = self.expert_tokenizer.token_to_id("<|endoftext|>")
 
         gen_ids: List[int] = []
+        max_steps = min(96, self.expert_model.max_seq_len - len(prompt_ids))
+
         with torch.no_grad():
-            for _ in range(96):
-                logits = self.expert_model(curr_tensor)
-                next_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+            # 1. Prefill prompt once to initialize recurrent RAF + spectral history states
+            logits, layer_states = self.expert_model(
+                prompt_tensor,
+                states=None,
+                return_states=True,
+            )
+            next_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+
+            # 2. Step token-by-token (L=1) with O(1) state updates
+            for _ in range(max_steps):
                 tid = next_tok.item()
                 if tid == eos_id:
                     break
                 gen_ids.append(tid)
-                curr_tensor = torch.cat([curr_tensor, next_tok], dim=-1)
+                logits, layer_states = self.expert_model(
+                    next_tok,
+                    states=layer_states,
+                    return_states=True,
+                )
+                next_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
         raw_text = self.expert_tokenizer.decode(gen_ids).strip()
 
@@ -159,11 +181,13 @@ class CouncilDispatcher(BaseDispatcher):
         self,
         intent_name: str,
         signature: str,
-        args: List[int],
+        args: List[Union[int, float]],
         user_query: str,
         neural_gen_lat_s: float = 0.0,
+        cache_hit: bool = False,
     ) -> Dict[str, Any]:
         """Executes code via neural reasoning or verified kernel fusion on MiniStackVM."""
+        route_label = "TIER_1_LEARNED_CACHE" if cache_hit else "TIER_2_NEURAL_COUNCIL"
         fused_code = KERNEL_FUSION_MAP.get(intent_name)
         if fused_code:
             try:
@@ -175,14 +199,25 @@ class CouncilDispatcher(BaseDispatcher):
                 vm_res = self.engine.vm.execute(bytecode, args)
                 vm_lat_us = (time.perf_counter() - t0_vm) * 1_000_000.0
 
+                # Double-Lock Verification Gate: persist to L1 learned cache
+                self.learned_cache.record_verified(
+                    query=user_query,
+                    intent_name=intent_name,
+                    target_signature=signature,
+                    args_count=len(args),
+                    verified_by_vm=True,
+                )
+
                 return {
                     "status": "SUCCESS",
                     "mode": "execute",
+                    "route": route_label,
                     "intent_id": intent_name,
                     "intent_name": intent_name,
                     "args": args,
                     "result": vm_res,
                     "verified": True,
+                    "cache_hit": cache_hit,
                     "generated_code": fused_code,
                     "bytecode": bytecode,
                     "disassembly": self.engine.vm.disassemble(bytecode),
@@ -200,14 +235,26 @@ class CouncilDispatcher(BaseDispatcher):
         )
         vm_res = engine_res.test_outcomes[0].vm_result if engine_res.test_outcomes else None
 
+        # Double-Lock Verification Gate: persist to L1 cache only if MiniStackVM verified execution
+        if engine_res.verified:
+            self.learned_cache.record_verified(
+                query=user_query,
+                intent_name=intent_name,
+                target_signature=signature,
+                args_count=len(args),
+                verified_by_vm=True,
+            )
+
         return {
             "status": "SUCCESS" if engine_res.verified else "VERIFICATION_FAILED",
             "mode": "execute",
+            "route": route_label,
             "intent_id": intent_name,
             "intent_name": intent_name,
             "args": args,
             "result": vm_res,
             "verified": engine_res.verified,
+            "cache_hit": cache_hit,
             "generated_code": engine_res.code,
             "bytecode": engine_res.bytecode,
             "disassembly": engine_res.disassembly,
@@ -221,9 +268,9 @@ class CouncilDispatcher(BaseDispatcher):
         self,
         user_query: str,
         pending_intent: Optional[Dict[str, Any]] = None,
-        pending_args: Optional[List[int]] = None,
+        pending_args: Optional[List[Union[int, float]]] = None,
     ) -> Dict[str, Any]:
-        """Dispatches queries using neural language expert or pending intent state."""
+        """Dispatches queries using L1 Learned Cache, Tier 2 neural language expert, or pending intent state."""
         # 1. Resolve pending intent
         if pending_intent is not None:
             new_numbers = extract_numbers(user_query)
@@ -254,21 +301,33 @@ class CouncilDispatcher(BaseDispatcher):
 
         # 2. Check for synthesis request
         is_synth = is_synthesis_query(user_query)
+        real_args = extract_numbers(user_query)
 
-        # 3. Predict contract via Language Expert
+        # 3. Check Tier 1 Self-Hydrating L1 Cache before invoking Tier 2 neural expert
+        if not is_synth and real_args:
+            cached = self.learned_cache.lookup(user_query, len(real_args))
+            if cached is not None:
+                return self._execute_contract(
+                    intent_name=cached["intent_name"],
+                    signature=cached["target_signature"],
+                    args=real_args,
+                    user_query=user_query,
+                    neural_gen_lat_s=0.0,
+                    cache_hit=True,
+                )
+
+        # 4. Predict contract via Tier 2 Language Expert (O(1) recurrent step)
         t0_infer = time.perf_counter()
         contract = self.predict_contract(user_query)
         infer_lat_s = time.perf_counter() - t0_infer
 
         if contract is None:
-            # Fallback to pure number calculation
-            nums = extract_numbers(user_query)
-            if len(nums) >= 2:
+            if len(real_args) >= 2:
                 contract = {
                     "intent_name": "add",
                     "strategy": "single_pass",
                     "signature": "def add(a: int, b: int) -> int:",
-                    "args": nums[:2],
+                    "args": real_args[:2],
                 }
             else:
                 return {
@@ -282,7 +341,6 @@ class CouncilDispatcher(BaseDispatcher):
 
         # Argument binding logic
         expected_n = get_expected_args_count(signature) or 2
-        real_args = extract_numbers(user_query)
 
         if not is_synth:
             if len(real_args) == expected_n:
@@ -349,4 +407,5 @@ class CouncilDispatcher(BaseDispatcher):
             args=args,
             user_query=user_query,
             neural_gen_lat_s=infer_lat_s,
+            cache_hit=False,
         )

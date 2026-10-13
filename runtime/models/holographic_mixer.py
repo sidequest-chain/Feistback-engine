@@ -129,22 +129,36 @@ def functional_holographic_mixer(
     R: torch.Tensor,
     W_flat: torch.Tensor,
     activation: str = "silu",
-    causal: bool = True
+    causal: bool = True,
+    seq_history: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Functional HolographicMixer execution (pure deterministic function for autograd).
 
     Steps:
-      1. Causal sequence mixing along sequence dimension (dim=1) using FFT convolution.
+      1. Causal sequence mixing along sequence dimension (dim=1) using FFT convolution
+         (or exact O(1)-FFT-free causal tap inner product when L=1 and seq_history is given).
       2. Holographic channel binding along hidden dimension (dim=-1) using circular convolution.
       3. Linear projection and bias.
       4. Gradient-preserving non-linearity (SiLU or scaled Tanh).
     """
     B, L, D_half = R.shape
-    w_seq, w_chan, w_proj, b = unpack_mixer_weights(W_flat, L, D_half)
 
-    # 1. Causal sequence mixing
-    R_seq = holographic_circular_conv_1d(R, w_seq, dim=1, n=L, causal=causal)
+    if causal and L == 1 and seq_history is not None:
+        # Exact causal 1D convolution at current step t without running sequence FFT
+        R_full = torch.cat([seq_history, R], dim=1)
+        total_len = R_full.shape[1]
+        w_seq, w_chan, w_proj, b = unpack_mixer_weights(W_flat, total_len, D_half)
+        tap_len = w_seq.shape[0]
+        if total_len > tap_len:
+            R_full = R_full[:, -tap_len:, :]
+            total_len = tap_len
+        w_taps = w_seq[:total_len].float().flip(0).view(1, total_len, 1)
+        R_seq = (R_full.float() * w_taps).sum(dim=1, keepdim=True).to(dtype=R.dtype)
+    else:
+        w_seq, w_chan, w_proj, b = unpack_mixer_weights(W_flat, L, D_half)
+        # 1. Causal sequence mixing
+        R_seq = holographic_circular_conv_1d(R, w_seq, dim=1, n=L, causal=causal)
 
     # 2. Holographic channel binding
     R_chan = holographic_circular_conv_1d(R_seq, w_chan, dim=-1, n=D_half, causal=False)

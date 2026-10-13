@@ -7,7 +7,8 @@ Validates:
 3. Local variable assignment and access (diff, sq).
 4. Stack manipulation opcodes (DROP, SWAP, OVER, ROT).
 5. Infinite loop gas limit protection (RuntimeExecutionError).
-6. Execution latency benchmarks and 100% mathematical parity with native Python.
+6. Nested if/elif/else control flow, boolean operations (and/or), and floats (PUSH_FLOAT).
+7. Execution latency benchmarks and 100% mathematical parity with native Python.
 """
 
 import math
@@ -153,6 +154,41 @@ def calc_with_locals(a: int, b: int) -> int:
     print(f"[PASS] calc_with_locals: 100% parity across {len(test_cases)} cases (Avg latency: {elapsed_us:.2f} us/exec)")
 
 
+def test_nested_branching_and_bool_ops():
+    """Validates nested if/elif/else statements, boolean operators (and/or), and PUSH_FLOAT."""
+    code = """
+def classify_range(x: int, low: int, high: int) -> int:
+    if x >= low and x <= high:
+        res = 1
+    elif x < 0 or x > 1000:
+        res = -1
+    else:
+        res = 0
+    return res
+"""
+    compiler = ASTCompiler()
+    bytecode = compiler.compile(code)
+    vm = MiniStackVM()
+
+    for x, low, high, expected in [
+        (50, 0, 100, 1),
+        (-5, 0, 100, -1),
+        (1500, 0, 100, -1),
+        (250, 0, 100, 0),
+    ]:
+        res = vm.execute(bytecode, [x, low, high])
+        assert res == expected, f"Nested branching mismatch for ({x}, {low}, {high}): {res} != {expected}"
+
+    float_code = """
+def scale_val(x: float) -> float:
+    return x * 1.5 + 0.25
+"""
+    bc_float = compiler.compile(float_code)
+    assert abs(vm.execute(bc_float, [4.0]) - 6.25) < 1e-9
+
+    print("[PASS] nested_branching_and_bool_ops: nested if/elif/else, and/or, and PUSH_FLOAT verified")
+
+
 def test_stack_operations():
     """Validates stack manipulation instructions: DROP, SWAP, OVER, ROT."""
     vm = MiniStackVM()
@@ -203,6 +239,7 @@ def main():
     test_bitwise_ops()
     test_calc_complex()
     test_calc_with_locals()
+    test_nested_branching_and_bool_ops()
     test_stack_operations()
     test_gas_limit_protection()
 

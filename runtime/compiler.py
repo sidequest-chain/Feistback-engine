@@ -3,7 +3,8 @@ AST to MiniStackVM Bytecode Compiler
 ====================================
 Compiles Python AST representations of pure functions into deterministic,
 zero-dependency MiniStackVM bytecode instructions.
-Supports binary/unary math, bitwise ops, local variables, and built-in calls.
+Supports binary/unary math, bitwise ops, boolean short-circuit ops,
+nested conditionals (if/elif/else), local variables, and built-in calls.
 """
 
 from __future__ import annotations
@@ -64,29 +65,36 @@ class ASTCompiler:
 
         has_explicit_return = False
         for stmt in fn.body:
-            if isinstance(stmt, ast.Return):
-                self._compile_return(stmt)
+            if self._compile_stmt(stmt):
                 has_explicit_return = True
                 break
-            elif isinstance(stmt, ast.Assign):
-                self._compile_assign(stmt)
-            elif isinstance(stmt, ast.AugAssign):
-                self._compile_augassign(stmt)
-            elif isinstance(stmt, ast.If):
-                self._compile_if_statement(stmt)
-            elif isinstance(stmt, ast.Pass):
-                continue
-            elif isinstance(stmt, ast.Expr):
-                # Ignore docstring expressions
-                if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
-                    continue
-                self._compile_expr(stmt.value)
-            else:
-                raise NotImplementedError(f"Unsupported statement type: {type(stmt).__name__}")
 
         if not has_explicit_return:
-            # Default fallback return 0 if no explicit return hit
             self.bytecode.extend([OpCode.PUSH_CONST, 0, OpCode.RET])
+
+    def _compile_stmt(self, stmt: ast.stmt) -> bool:
+        """
+        Compiles a single statement node.
+        Returns True if the statement is an explicit top-level Return.
+        """
+        if isinstance(stmt, ast.Return):
+            self._compile_return(stmt)
+            return True
+        elif isinstance(stmt, ast.Assign):
+            self._compile_assign(stmt)
+        elif isinstance(stmt, ast.AugAssign):
+            self._compile_augassign(stmt)
+        elif isinstance(stmt, ast.If):
+            self._compile_if_statement(stmt)
+        elif isinstance(stmt, ast.Pass):
+            pass
+        elif isinstance(stmt, ast.Expr):
+            if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                return False
+            self._compile_expr(stmt.value)
+        else:
+            raise NotImplementedError(f"Unsupported statement type: {type(stmt).__name__}")
+        return False
 
     def _compile_return(self, node: ast.Return) -> None:
         """Compiles return value expression and appends RET opcode."""
@@ -163,7 +171,7 @@ class ASTCompiler:
         self.bytecode.extend([OpCode.STORE_LOCAL, self.local_map[var_name]])
 
     def _compile_if_statement(self, node: ast.If) -> None:
-        """Compiles conditional branch statement."""
+        """Compiles conditional branch statement (including nested if/elif/else)."""
         # 1. Evaluate condition
         self._compile_expr(node.test)
 
@@ -172,24 +180,12 @@ class ASTCompiler:
         jmp_offset_idx = len(self.bytecode)
         self.bytecode.append(0)  # Placeholder relative offset
 
-        # 3. Compile body
+        # 3. Compile body statements recursively
         for stmt in node.body:
-            if isinstance(stmt, ast.Return):
-                self._compile_return(stmt)
-            elif isinstance(stmt, ast.Assign):
-                self._compile_assign(stmt)
-            elif isinstance(stmt, ast.AugAssign):
-                self._compile_augassign(stmt)
-            elif isinstance(stmt, ast.Pass):
-                continue
-            else:
-                self._compile_expr(stmt.value if isinstance(stmt, ast.Expr) else stmt)
+            if self._compile_stmt(stmt):
+                break
 
-        # 4. Patch relative offset for JMP_IF_FALSE
-        target_ip = len(self.bytecode)
-        self.bytecode[jmp_offset_idx] = target_ip - (jmp_offset_idx + 1)
-
-        # 5. Compile optional else branch
+        # 4. Compile optional else / elif branch
         if node.orelse:
             self.bytecode.append(OpCode.JMP)
             jmp_else_idx = len(self.bytecode)
@@ -199,23 +195,21 @@ class ASTCompiler:
             self.bytecode[jmp_offset_idx] = orelse_start - (jmp_offset_idx + 1)
 
             for stmt in node.orelse:
-                if isinstance(stmt, ast.Return):
-                    self._compile_return(stmt)
-                elif isinstance(stmt, ast.Assign):
-                    self._compile_assign(stmt)
-                elif isinstance(stmt, ast.AugAssign):
-                    self._compile_augassign(stmt)
-                elif isinstance(stmt, ast.Pass):
-                    continue
-                else:
-                    self._compile_expr(stmt.value if isinstance(stmt, ast.Expr) else stmt)
+                if self._compile_stmt(stmt):
+                    break
 
             self.bytecode[jmp_else_idx] = len(self.bytecode)
+        else:
+            target_ip = len(self.bytecode)
+            self.bytecode[jmp_offset_idx] = target_ip - (jmp_offset_idx + 1)
 
     def _compile_expr(self, node: ast.AST) -> None:
         """Compiles an expression in postfix evaluation order."""
         if isinstance(node, ast.BinOp):
             self._compile_binop(node)
+
+        elif isinstance(node, ast.BoolOp):
+            self._compile_boolop(node)
 
         elif isinstance(node, ast.Compare):
             self._compile_compare(node)
@@ -232,8 +226,11 @@ class ASTCompiler:
         elif isinstance(node, ast.Constant):
             val = node.value
             if isinstance(val, bool):
-                val = 1 if val else 0
-            self.bytecode.extend([OpCode.PUSH_CONST, val])
+                self.bytecode.extend([OpCode.PUSH_CONST, 1 if val else 0])
+            elif isinstance(val, float):
+                self.bytecode.extend([OpCode.PUSH_FLOAT, val])
+            else:
+                self.bytecode.extend([OpCode.PUSH_CONST, val])
 
         elif isinstance(node, ast.Name):
             if node.id in self.local_map:
@@ -251,6 +248,18 @@ class ASTCompiler:
 
         else:
             raise NotImplementedError(f"Unsupported expression node: {type(node).__name__}")
+
+    def _compile_boolop(self, node: ast.BoolOp) -> None:
+        """Compiles boolean `and` / `or` expressions."""
+        self._compile_expr(node.values[0])
+        for val_node in node.values[1:]:
+            self._compile_expr(val_node)
+            if isinstance(node.op, ast.And):
+                self.bytecode.append(OpCode.BIT_AND)
+            elif isinstance(node.op, ast.Or):
+                self.bytecode.append(OpCode.BIT_OR)
+            else:
+                raise NotImplementedError(f"Unsupported BoolOp: {type(node.op).__name__}")
 
     def _compile_binop(self, node: ast.BinOp) -> None:
         """Compiles binary operators: left, right, then opcode."""

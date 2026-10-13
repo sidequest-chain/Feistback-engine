@@ -4,7 +4,7 @@
 [![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL%201.2-blue.svg)](LICENSE)
 [![Architecture: RAF-v2](https://img.shields.io/badge/Architecture-RAF--v2%20(Reversible%20Feistel)-orange.svg)](docs/RAF_V2_BREAKTHROUGH_REPORT.md)
 [![KV Cache](https://img.shields.io/badge/KV--Cache-0%20Bytes%20(O(1)%20Memory)-brightgreen.svg)](#the-kv-cache-memory-wall)
-[![Deterministic VM](https://img.shields.io/badge/MiniStackVM-Sub--20µs%20Deterministic-purple.svg)](#44-deterministic-stack-virtual-machine-ministackvm)
+[![Deterministic VM](https://img.shields.io/badge/MiniStackVM-Sub--20µs%20Deterministic-purple.svg)](#54-deterministic-stack-virtual-machine-ministackvm)
 [![DCO 1.1](https://img.shields.io/badge/Contributions-DCO%201.1%20Signed--off-success.svg)](DCO.md)
 
 ---
@@ -103,29 +103,29 @@ The training pipeline bridges the gap between parallel GPU efficiency and $\math
 ┌──────────────────────────────────────────────────────────────────────┘
 │
 ▼ (GPU Forward Pass)
-┌────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────┐
 │  Parallel Associative Prefix Scan (RAF v2)             │
 │  - Compute all k_t, v_t, beta_t in parallel across L   │
 │  - Cumulative decay outer products computed via tensor │
 │    broadcasting: M_t = sum_{i=1}^t (decay_i * (k ⊗ v)) │
 │  - Training Throughput: ~28,000 - 40,000 tokens/sec    │
-└───────────────────────────────────┬────────────────────┘
+└───────────────────────────────────┬─────────────────────┘
                                     │
                                     ▼
-┌────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────┐
 │  Reversible Feistel Backpropagation                    │
 │  - Intermediate activations are NOT cached in memory   │
 │  - Exact analytic reverse reconstruction:              │
 │    R_i = L_{i+1},  L_i = R_{i+1} - gamma * F(L_{i+1})  │
 │  - O(1) Backpropagation Memory                         │
-└────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────┘
 ```
 
 1. **Structured Data Curation:** Training pairs are formatted into streaming sequences:
    `<|user|> {instruction} <|contract|> {contract_json} <|endoftext|>`
 2. **Target Loss Masking:** To prevent the model from wasting capacity on memorizing user queries, prompt tokens are masked with label `-100`. Gradients only flow through the generated contract tokens (`loss_mask = targets != -100`).
 3. **Dual-Mode Parallel Prefix Scan:** While generation is step-by-step, GPU training executes via parallel tensor prefix operations across the sequence dimension, achieving **28k–40k tokens/second** on consumer hardware.
-4. **Reversible Gradient Flow:** Layers reconstruct their input activations analytically during the backward pass, eliminating activation caching.
+4. **Reversible Gradient Flow:** Layers reconstruct their input activations analytically during the backward pass via `ReversibleFeistelBackboneFunction`, eliminating activation caching.
 
 ---
 
@@ -133,11 +133,11 @@ The training pipeline bridges the gap between parallel GPU efficiency and $\math
 The runtime workflow transforms natural queries into deterministically executed results:
 
 ```
-Step 1: Input Query ──▶ BaseDispatcher / CouncilDispatcher
+Step 1: Input Query ──────▶ ConfigDispatcher / CouncilDispatcher (+ L1 Learned Cache)
                              │
                              ▼ (Extract Arguments & Target Function)
 Step 2: Formal Signature ──▶ PureFeistelLM Autoregressive Step
-                             │ (Step-by-step recurrence, 24 KB state, 0 bytes KV)
+                             │ (Step-by-step recurrence, 24 KB RAF state, 0 bytes KV)
                              ▼
 Step 3: Synthesized Python ─▶ ASTCompiler
                              │ (ast.parse, syntax verification, bytecode generation)
@@ -148,10 +148,10 @@ Step 4: 16-bit Bytecode ───▶ MiniStackVM Sandbox
                         [ Verified Result ]
 ```
 
-1. **Semantic Routing:** The query is routed through either `ConfigDispatcher` (rule-based fast-path) or a specialized neural micro-model (`CouncilDispatcher`) to extract structured argument vectors and identify the formal target signature.
-2. **Autoregressive Generation:** `PureFeistelLM` steps forward one token at a time. In each step, the recurrent 2D fast-weight matrix $M_t = \beta_t M_{t-1} + (1-\beta_t)(k_t \otimes v_t)$ updates in constant time with **0 bytes allocated to a KV-cache**.
+1. **Semantic Routing & Self-Hydrating Cache:** The query is routed through `ConfigDispatcher` (rule-based fast-path) or `CouncilDispatcher` (Tier 1 `LearnedIntentCache` + Tier 2 `eesti_keele_sl2ng` micro-model) to extract structured argument vectors and identify the formal target signature.
+2. **Autoregressive Generation:** `PureFeistelLM` steps forward one token at a time. In each step, the recurrent 2D fast-weight matrix $M_t = \beta_t M_{t-1} + (1-\beta_t)(k_t \otimes v_t)$ and causal spectral window update in constant time with **0 bytes allocated to a KV-cache**.
 3. **AST Transpilation:** The generated Python function string is ingested by `ASTCompiler`, parsed into Python's native Abstract Syntax Tree, verified against security rules (disallowing arbitrary OS imports, `eval`, or file access), and transpiled into compact instruction words.
-4. **Isolated VM Execution:** The bytecode is pushed into `MiniStackVM`, initialized with input arguments, evaluated on an isolated integer stack, and halted at `RET` within microsecond latency (~1.9 to 18 µs).
+4. **Isolated VM Execution:** The bytecode is pushed into `MiniStackVM`, initialized with input arguments, evaluated on an isolated stack, and halted at `RET` within microsecond latency (~1.9 to 18 µs).
 
 ---
 
@@ -197,9 +197,9 @@ $$
 $$
 
 where:
-- $\text{FFT}$ and $\text{iFFT}$ are Fast Fourier Transforms along the sequence dimension;
+- $\text{FFT}$ and $\text{iFFT}$ are Fast Fourier Transforms along the sequence and feature dimensions;
 - $W_{\text{spectral}} \in \mathbb{C}^{D/2 \times K}$ is a parameterized complex filter;
-- Causal masking is applied in the temporal domain to enforce the autoregressive property.
+- Causal masking in the temporal domain and recurrent `seq_history` inner-product stepping guarantee exact equivalence between parallel training ($L > 1$) and recurrent inference ($L = 1$).
 
 ---
 
@@ -246,7 +246,7 @@ $$
 
 - **Training Mode:** Executed via parallel cumulative operations on GPUs, achieving $\sim 28,000 - 40,000\text{ tokens/sec}$ throughput.
 - **Inference Mode:** Executed token-by-token using the $\mathcal{O}(1)$ recurrent state equation.
-- **Numerical Equivalence:** Parity verification tests confirm the difference between parallel training outputs and recurrent step outputs is bounded below $2.69 \times 10^{-7}$, well within numerical tolerance.
+- **Numerical Equivalence:** Parity verification tests confirm the difference between parallel training outputs and recurrent step outputs across the full 12-layer backbone is bounded below $2.39 \times 10^{-7}$.
 
 ---
 
@@ -272,29 +272,37 @@ $$
 feistback-engine/
 ├── runtime/                          # Execution engine & neural architecture
 │   ├── engine.py                     # FeistbackEngine (orchestration & verification)
+│   ├── canonicalizer.py              # AST signature canonicalization & decanonicalization
 │   ├── compiler.py                   # ASTCompiler (Python AST -> MiniStackVM bytecode)
+│   ├── registry.py                   # ModelRegistry (declarative micro-model manager)
 │   ├── models/                       # Model layers (PureFeistelLM, RAF v2, SpectralMixer)
-│   └── vm/                           # MiniStackVM emulator, opcodes, instruction sets
-├── dispatchers/                      # Intent routing & multi-turn dialogue
-│   ├── base.py                       # BaseDispatcher abstract interface & utilities
+│   └── vm/                           # MiniStackVM emulator & instruction opcodes
+├── dispatchers/                      # Intent routing, L1 cache & multi-turn dialogue
+│   ├── base.py                       # BaseDispatcher abstract interface
+│   ├── cache_manager.py              # LearnedIntentCache (Self-Hydrating L1 LRU cache)
 │   ├── fast_path.py                  # ConfigDispatcher (sub-millisecond rule routing)
-│   └── council.py                    # CouncilDispatcher (specialist micro-model router)
+│   ├── council.py                    # CouncilDispatcher (specialist micro-model router)
+│   └── parsers/                      # Language-specific number & intent utilities
 ├── models/                           # Trained model weights & vocabularies
 │   ├── logic_feistel_clean/          # 3.8M PureFeistelLM weights + 16k pruned BPE
 │   └── eesti_keele_sl2ng/            # Reference 2.5M slang expert weights + 4k tokenizer
 ├── training/                         # Model training workshop
+│   ├── distill.py                    # Feistel backbone trainer
+│   ├── dataset.py                    # Sequence packing & dataset utilities
 │   ├── data_generators/              # Synthetic dataset generators (slang, clean logic)
 │   ├── tokenizers/                   # BPE tokenizer training scripts
-│   └── trainers/                     # Distributed trainers for Feistel models
+│   └── trainers/                     # Specialist trainers & standalone inference runner
 ├── scripts/                          # User-facing CLI tools
 │   ├── interactive_chat.py           # Real-time interactive neuro-symbolic chat
-│   └── run_engine.py                 # Direct prompt synthesis and VM verification CLI
+│   ├── model_manager.py              # CLI tool for managing specialist models
+│   ├── run_engine.py                 # Direct prompt synthesis and VM verification CLI
+│   └── verify_dataset.py             # AST dataset verification utility
 ├── tests/                            # Rigorous parity and verification test suite
 │   ├── test_smart_vm.py              # MiniStackVM instruction & gas limit validation
-│   ├── test_dispatcher.py            # Natural language & Estengrish routing test
+│   ├── test_dispatcher.py            # Natural language, Council & L1 cache routing test
 │   ├── test_model_to_vm.py           # End-to-end OOD synthesis & execution test
-│   └── verify_raf_numerics.py        # Numerical tolerance test (parallel vs recurrent)
-├── archive/                          # Archived legacy weights & checkpoints (.gitignored)
+│   └── verify_raf_numerics.py        # Numerical tolerance & reversible autograd test
+├── docs/                             # Technical specifications & research reports
 ├── DCO.md                            # Developer Certificate of Origin (EUPL-1.2 compliant)
 ├── CONTRIBUTING.md                   # Lightweight contribution guide
 └── LICENSE                           # European Union Public Licence (EUPL-1.2)
@@ -316,13 +324,13 @@ pip install -r requirements.txt
 # MiniStackVM mathematical parity & gas limits
 .\.venv\Scripts\python.exe tests/test_smart_vm.py
 
-# Natural language intent routing & Estengrish parsing
+# Natural language intent routing, Council O(1) stepping & Self-Hydrating Cache
 .\.venv\Scripts\python.exe tests/test_dispatcher.py
 
 # End-to-end neural synthesis to VM execution on OOD prompts
 .\.venv\Scripts\python.exe tests/test_model_to_vm.py
 
-# Numerical precision between parallel and recurrent modes
+# Numerical precision (parallel vs L=1 recurrent) & reversible autograd parity
 .\.venv\Scripts\python.exe tests/verify_raf_numerics.py
 ```
 
@@ -348,17 +356,3 @@ The EUPL is a reciprocal (copyleft) open-source license crafted by the European 
 
 ### Developer Certificate of Origin (DCO 1.1)
 To ensure contribution remains frictionless and requires no third-party CLA infrastructure, we use the standard **Developer Certificate of Origin (DCO)**.
-
-Contributors certify their submissions by adding a `Signed-off-by` trailer line to commit messages:
-```bash
-git commit -s -m "feat(runtime): optimize associative memory matrix stride"
-```
-For detailed instructions, see [DCO.md](DCO.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## 9. Citation & Research References
-
-* **RAF v2 Breakthrough:** [docs/RAF_V2_BREAKTHROUGH_REPORT.md](docs/RAF_V2_BREAKTHROUGH_REPORT.md)
-* **Architecture Post-Mortem & Research Notes:** [docs/RESEARCH_AND_POSTMORTEM.md](docs/RESEARCH_AND_POSTMORTEM.md)
-* **Council of Specialties Specification (RFC-002):** [docs/RFC_002_COUNCIL_OF_SPECIALTIES_V2.md](docs/RFC_002_COUNCIL_OF_SPECIALTIES_V2.md)

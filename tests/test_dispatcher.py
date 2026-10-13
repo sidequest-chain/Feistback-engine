@@ -1,8 +1,11 @@
 """
-End-to-End Test Suite for Intent Dispatcher
-============================================
-Validates natural language and 'estengrish' query routing to PureFeistelLM signatures,
-sub-microsecond execution on MiniStackVM, and 100% mathematical accuracy.
+End-to-End Test Suite for Intent Dispatcher & Council of Specialties
+====================================================================
+Validates:
+1. Natural language and 'estengrish' query routing via ConfigDispatcher (Tier 0).
+2. CouncilDispatcher 3-Tier routing:
+   - Tier 2: Neural Slang Expert O(1) recurrent stepping -> Logic Engine -> MiniStackVM.
+   - Tier 1: Self-Hydrating LearnedIntentCache hit after Double-Lock VM verification.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 # Ensure repository root is on sys.path
@@ -18,7 +22,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from runtime import FeistbackEngine
-from dispatchers import ConfigDispatcher
+from dispatchers import ConfigDispatcher, CouncilDispatcher
 
 
 def main():
@@ -33,7 +37,7 @@ def main():
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
 
-    print(f"[1/2] Loading FeistbackEngine from {checkpoint_path}...")
+    print(f"[1/3] Loading FeistbackEngine from {checkpoint_path}...")
     engine = FeistbackEngine.from_checkpoint(checkpoint_path)
     dispatcher = ConfigDispatcher(engine, config_path="config/intents.json")
     print(f"Loaded {len(dispatcher.intents)} intents from config/intents.json.\n")
@@ -77,7 +81,7 @@ def main():
         },
     ]
 
-    print("[2/2] Running 5 Natural Language & Estengrish Test Queries...")
+    print("[2/3] Running 5 Natural Language & Estengrish Test Queries...")
     print("=" * 85)
 
     all_passed = True
@@ -141,7 +145,33 @@ def main():
     print("=" * 85)
 
     assert all_passed, "One or more dispatcher test cases failed!"
-    print("\nALL 5 NATURAL LANGUAGE & ESTENGRISH DISPATCHER TESTS PASSED WITH 100% ACCURACY!")
+
+    # 3. Verify CouncilDispatcher O(1) recurrent stepping + Tier 1 Self-Hydrating Cache
+    slang_ckpt = "models/eesti_keele_sl2ng/slang_expert_feistel.pt"
+    if os.path.exists(slang_ckpt):
+        print("\n[3/3] Testing CouncilDispatcher (Tier 2 Neural Slang -> Tier 1 Self-Hydrating Cache)...")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_cache_path = os.path.join(tmpdir, "learned_intents.json")
+            council = CouncilDispatcher(
+                engine=engine,
+                model_path=slang_ckpt,
+                cache_path=temp_cache_path,
+            )
+
+            query_1 = "pane 15 ja 25 kokku"
+            resp_t2 = council.dispatch(query_1)
+            print(f"  [Call 1 - Tier 2 Neural] Route: {resp_t2.get('route')} | Result: {resp_t2.get('result')} | Slang Infer: {resp_t2.get('generation_latency_s', 0)*1000:.1f} ms")
+            assert resp_t2["status"] == "SUCCESS" and resp_t2["result"] == 40
+            assert resp_t2["cache_hit"] is False and "NEURAL_COUNCIL" in resp_t2["route"]
+
+            # Second call with different numbers but same structural pattern -> Tier 1 Cache Hit
+            query_2 = "pane 100 ja 250 kokku"
+            resp_t1 = council.dispatch(query_2)
+            print(f"  [Call 2 - Tier 1 Cache ] Route: {resp_t1.get('route')} | Result: {resp_t1.get('result')} | Slang Infer: 0.0 ms (Bypassed)")
+            assert resp_t1["status"] == "SUCCESS" and resp_t1["result"] == 350
+            assert resp_t1["cache_hit"] is True and "LEARNED_CACHE" in resp_t1["route"]
+
+    print("\nALL NATURAL LANGUAGE, COUNCIL O(1) RECURRENT, AND SELF-HYDRATING CACHE TESTS PASSED!")
 
 
 if __name__ == "__main__":

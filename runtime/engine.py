@@ -18,22 +18,43 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
+from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
 from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.compiler import ASTCompiler
 from runtime.vm.ministack_vm import MiniStackVM
 from runtime.registry import ModelRegistry
 
-try:
-    from training.trainers.run_pure_feistel import canonicalize_signature, decanonicalize_code
-except ImportError:
-    try:
-        from scripts.run_pure_feistel import canonicalize_signature, decanonicalize_code
-    except ImportError:
-        # Inline fallback for pure signature canonicalization
-        def canonicalize_signature(sig: str):
-            return sig, None
-        def decanonicalize_code(code: str, inv_map):
-            return code
+
+# Safe restricted builtins for Python reference verification
+_SAFE_VERIFY_BUILTINS: Dict[str, Any] = {
+    "abs": abs,
+    "all": all,
+    "any": any,
+    "bool": bool,
+    "dict": dict,
+    "enumerate": enumerate,
+    "filter": filter,
+    "float": float,
+    "int": int,
+    "len": len,
+    "list": list,
+    "map": map,
+    "max": max,
+    "min": min,
+    "pow": pow,
+    "range": range,
+    "reversed": reversed,
+    "round": round,
+    "set": set,
+    "sorted": sorted,
+    "str": str,
+    "sum": sum,
+    "tuple": tuple,
+    "zip": zip,
+    "True": True,
+    "False": False,
+    "None": None,
+}
 
 
 @dataclass
@@ -248,11 +269,12 @@ class FeistbackEngine:
         # 6. Resolve / Auto-generate test inputs
         cases = self._resolve_test_inputs(test_inputs, arg_names)
 
-        # 7. Prepare Python reference execution
+        # 7. Prepare Python reference execution in restricted sandbox scope
         local_scope: Dict[str, Any] = {}
+        safe_globals: Dict[str, Any] = {"__builtins__": _SAFE_VERIFY_BUILTINS}
         py_callable = None
         try:
-            exec(full_code, {}, local_scope)
+            exec(full_code, safe_globals, local_scope)
             py_callable = next(v for v in local_scope.values() if callable(v))
         except Exception:
             py_callable = None

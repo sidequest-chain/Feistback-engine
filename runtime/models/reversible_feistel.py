@@ -1,27 +1,126 @@
 """
 Reversible Feistel Network
 ==========================
-ReversibleFeistelBlock executes bit-accurate reversible Feistel network dynamics:
+ReversibleFeistelBlock and ReversibleFeistelBackboneFunction execute bit-accurate
+reversible Feistel network dynamics:
   Forward pass (i = 0 ... N-1):
       L_{i+1} = R_i
-      R_{i+1} = L_i + scale * F(R_i, W_i)
+      R_{i+1} = L_i + scale * F(R_i, S_i)
 
   Backward pass (i = N-1 ... 0):
       R_i = L_{i+1}
-      L_i = R_{i+1} - scale * F(L_{i+1}, W_i)
+      L_i = R_{i+1} - scale * F(L_{i+1}, S_i)
 
 Zero-Activation Memory Invariant:
-  - ctx.save_for_backward saves ONLY the final layer output Y and parameter tensor W.
-  - Intermediate activations are NOT cached.
+  - ctx.save_for_backward saves ONLY the final layer output Y (and parameters).
+  - Intermediate layer activations are NOT cached in memory.
   - During backpropagation, input activations for each layer are reconstructed mathematically,
     achieving O(1) activation memory regardless of network depth.
 """
 
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
 from runtime.models.holographic_mixer import functional_holographic_mixer, compute_param_len
+
+
+class ReversibleFeistelBackboneFunction(torch.autograd.Function):
+    """
+    Custom PyTorch autograd function for multi-layer PureFeistelBackbone (RAF v2 / GLR).
+    Guarantees O(1) activation memory across layer depth by reconstructing intermediate
+    branch states (L_i, R_i) analytically during the backward pass:
+        R_i = L_{i+1}
+        L_i = R_{i+1} - gamma * F_i(L_{i+1})
+    """
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        x: torch.Tensor,
+        layers: nn.ModuleList,
+        *flat_params: torch.Tensor,
+    ) -> torch.Tensor:
+        L, R = torch.chunk(x, 2, dim=-1)
+
+        with torch.no_grad():
+            for layer in layers:
+                f_total, _ = layer.compute_round(R, state=None)
+                L_next = R
+                R_next = L + layer.layer_scale * f_total
+                L, R = L_next, R_next
+
+        y = torch.cat([L, R], dim=-1)
+        ctx.layers = layers
+        ctx.save_for_backward(y.detach())
+        return y
+
+    @staticmethod
+    def backward(ctx: Any, grad_output: torch.Tensor) -> Tuple[Optional[torch.Tensor], ...]:
+        (y,) = ctx.saved_tensors
+        layers: nn.ModuleList = ctx.layers
+
+        L, R = torch.chunk(y, 2, dim=-1)
+        grad_L, grad_R = torch.chunk(grad_output, 2, dim=-1)
+
+        layer_param_grads: List[List[Optional[torch.Tensor]]] = []
+
+        # Reconstruct layer states in reverse order: N-1 ... 0
+        for layer in reversed(layers):
+            # 1. Exact analytic Feistel inverse: R_i = L_{i+1}
+            R_prev = L
+
+            all_params = list(layer.parameters())
+            trainable_params = [p for p in all_params if p.requires_grad]
+
+            # 2. Evaluate round function F_i(R_i) once to reconstruct L_i and compute local VJP
+            with torch.enable_grad():
+                R_in = R_prev.detach().requires_grad_(True)
+                f_out, _ = layer.compute_round(R_in, state=None)
+
+                grads = torch.autograd.grad(
+                    outputs=f_out,
+                    inputs=[R_in] + trainable_params,
+                    grad_outputs=layer.layer_scale * grad_R,
+                    retain_graph=False,
+                    allow_unused=True,
+                )
+
+            dF_dR = grads[0] if grads[0] is not None else torch.zeros_like(R_prev)
+            trainable_grads = list(grads[1:])
+
+            # Reconstruct L_i = R_{i+1} - gamma * F_i(R_i)
+            with torch.no_grad():
+                L_prev = R - layer.layer_scale * f_out.detach()
+
+            # Map gradients back to all parameters of the layer
+            t_idx = 0
+            cur_layer_grads: List[Optional[torch.Tensor]] = []
+            for p in all_params:
+                if p.requires_grad:
+                    cur_layer_grads.append(trainable_grads[t_idx])
+                    t_idx += 1
+                else:
+                    cur_layer_grads.append(None)
+            layer_param_grads.append(cur_layer_grads)
+
+            # 3. Feistel chain rule for branch gradients:
+            #    grad_L_i = grad_R_{i+1}
+            #    grad_R_i = grad_L_{i+1} + d(gamma * F_i)/dR_i
+            grad_L_prev = grad_R
+            grad_R_prev = grad_L + dF_dR
+
+            L, R = L_prev, R_prev
+            grad_L, grad_R = grad_L_prev, grad_R_prev
+
+        grad_x = torch.cat([grad_L, grad_R], dim=-1)
+
+        # Reverse layer_param_grads back to forward layer order (0 ... N-1)
+        flat_param_grads: List[Optional[torch.Tensor]] = []
+        for l_grads in reversed(layer_param_grads):
+            flat_param_grads.extend(l_grads)
+
+        return (grad_x, None, *flat_param_grads)
 
 
 class ReversibleFeistelBlock(torch.autograd.Function):
