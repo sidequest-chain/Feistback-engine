@@ -7,7 +7,8 @@ act as composable stages with explicit JSON contracts and confidence gates.
 
 Default Pipeline Stages:
 1. LanguageNormalizerStage  : Cleans conversational wrappers & normalizes Estonian morphology.
-2. DomainRouterStage        : Classifies domain (arithmetic, finance/tax, number_theory, custom).
+2. DomainRouterStage        : Classifies domain (arithmetic, finance/tax, number_theory, custom)
+                              and flags out-of-domain or contradictory queries.
 3. ContractDispatcherStage  : Invokes Layer A Cache, Tier 2 Specialist LM, Layer B JIT Cache & VM.
 4. VerificationAuditStage   : Enforces deterministic VM verification & records stage telemetry.
 """
@@ -17,9 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
-from dispatchers.council import CouncilDispatcher
+from dispatchers.council import CONFIRMATION_WORDS, CouncilDispatcher
 from dispatchers.parsers.et_numbers import extract_numbers
 
 
@@ -75,7 +76,7 @@ class LanguageNormalizerStage(PipelineStage):
         re.IGNORECASE,
     )
 
-    def __init__(self, strip_conversational_fillers: bool = False) -> None:
+    def __init__(self, strip_conversational_fillers: bool = True) -> None:
         self.strip_conversational_fillers = strip_conversational_fillers
 
     def process(self, ctx: PipelineContext) -> PipelineContext:
@@ -110,34 +111,54 @@ class DomainRouterStage(PipelineStage):
     """
     Stage 2: Domain Classifier & Specialist Selector.
     Identifies whether the query targets arithmetic, finance/VAT/discount,
-    number theory (GCD/LCM/primality), or custom registered specialist domains.
+    number theory (GCD/LCM/primality), bitwise ops, or flags contradictory /
+    out-of-domain queries before they can poison downstream specialist caches.
     """
     name = "domain_router"
 
     _DOMAIN_KEYWORDS: Dict[str, List[str]] = {
         "finance": [
             "allahindlus", "ale", "soodukas", "soodustus", "käibemaks", "km",
-            "vat", "protsent", "protsenti", "%", "hind", "maksab", "palk", "eurot", "eur",
+            "vat", "protsent", "protsenti", "%", "hind", "maksab", "palk",
+            "palgast", "arvel", "arvelt", "kontol", "kulutasin", "teenisin",
         ],
         "number_theory": [
             "süt", "suurim ühistegur", "vük", "väikseim ühiskordne", "algarv",
             "faktoriaal", "gcd", "lcm",
         ],
+        "bitwise": [
+            "xor", "shift", "shifteeri", "bit", "bitid", "bitte", "mask", "maski",
+            "clamp", "clämbi", "klembi", "klämbi", "vahemikku", "piiridesse",
+        ],
         "arithmetic": [
-            "liida", "lahuta", "korruta", "jaga", "summa", "vahe", "korrutis",
-            "jagatis", "pane", "viska", "võta", "juurde", "maha", "kokku",
+            "liida", "lahuta", "korruta", "jaga", "summa", "summeeri", "vahe",
+            "diferents", "korrutis", "jagatis", "pane", "viska", "löö", "võta",
+            "tõmba", "juurde", "maha", "kokku", "ruut", "ruutu", "pluss", "miinus",
+            "korda", "laos", "laoseisust", "müüdi", "toodi", "lisandus", "liitus",
+            "ostsin", "töötasin", "jagatud",
         ],
     }
+
+    _CONTRADICTORY_RE = re.compile(
+        r"\b(?:või|voi)\b.*\b(?:liida|lahuta|korruta|jaga|arvuta)\b|"
+        r"\b(?:liida|lahuta|korruta|jaga)\b.*\b(?:või|voi)\b",
+        re.IGNORECASE,
+    )
 
     def process(self, ctx: PipelineContext) -> PipelineContext:
         t0 = time.perf_counter()
         q_lower = ctx.working_query.lower()
 
-        detected_domain = "arithmetic"
-        for dom, keywords in self._DOMAIN_KEYWORDS.items():
-            if any(kw in q_lower for kw in keywords):
-                detected_domain = dom
-                break
+        if ctx.pending_intent is not None or q_lower in CONFIRMATION_WORDS:
+            detected_domain = "arithmetic"
+        elif self._CONTRADICTORY_RE.search(q_lower):
+            detected_domain = "ambiguous"
+        else:
+            detected_domain = "out_of_domain"
+            for dom, keywords in self._DOMAIN_KEYWORDS.items():
+                if any(kw in q_lower for kw in keywords):
+                    detected_domain = dom
+                    break
 
         ctx.domain = detected_domain
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
@@ -156,7 +177,7 @@ class ContractDispatcherStage(PipelineStage):
     Stage 3: Neural-Symbolic Contract Dispatcher.
     Routes the normalized query through `CouncilDispatcher` (Layer A Cache ->
     Tier 2 Specialist Model with Margin Gate -> Layer B JIT Cache -> MiniStackVM).
-    Supports per-domain dispatcher overrides when multiple `.feist` experts are loaded.
+    Blocks out-of-domain or contradictory queries before cache persistence.
     """
     name = "contract_dispatcher"
 
@@ -176,22 +197,48 @@ class ContractDispatcherStage(PipelineStage):
         t0 = time.perf_counter()
         dispatcher = self.domain_dispatchers.get(ctx.domain, self.default_dispatcher)
 
-        res = dispatcher.dispatch(
-            user_query=ctx.working_query,
-            pending_intent=ctx.pending_intent,
-            pending_args=ctx.pending_args,
-        )
-        ctx.result = res
+        if ctx.domain in ("ambiguous", "out_of_domain") and ctx.pending_intent is None:
+            # Query still evaluated by neural specialist to record confidence margin,
+            # but strictly gated to NEED_CONFIRMATION so it can never poison Layer A cache.
+            contract = dispatcher.predict_contract(ctx.working_query) or {}
+            conf_margin = float(contract.get("confidence_margin", 0.0))
+            intent_name = contract.get("intent_name", "unknown")
+            signature = contract.get("signature", "def unknown(a: int, b: int) -> int:")
+            ctx.result = {
+                "status": "NEED_CONFIRMATION",
+                "mode": "execute",
+                "route": "CONFIDENCE_GATE_BLOCKED",
+                "intent": contract,
+                "intent_id": intent_name,
+                "intent_name": intent_name,
+                "signature": signature,
+                "args": ctx.extracted_args,
+                "confidence_margin": conf_margin,
+                "cache_hit": False,
+                "message": (
+                    f"Päring liigitati kategooriasse '{ctx.domain}' (mudeli kindlus {conf_margin * 100:.1f}%). "
+                    f"Palun kinnita tehe '{intent_name}'."
+                ),
+                "query": ctx.original_query,
+            }
+        else:
+            res = dispatcher.dispatch(
+                user_query=ctx.working_query,
+                pending_intent=ctx.pending_intent,
+                pending_args=ctx.pending_args,
+            )
+            ctx.result = res
+
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         ctx.traces.append(
             StageTrace(
                 stage_name=self.name,
                 latency_ms=round(elapsed_ms, 4),
                 metadata={
-                    "status": res.get("status"),
-                    "route": res.get("route"),
-                    "intent_name": res.get("intent_name"),
-                    "confidence_margin": res.get("confidence_margin"),
+                    "status": ctx.result.get("status"),
+                    "route": ctx.result.get("route"),
+                    "intent_name": ctx.result.get("intent_name"),
+                    "confidence_margin": ctx.result.get("confidence_margin"),
                 },
             )
         )
@@ -242,7 +289,7 @@ class CouncilPipeline:
         self,
         dispatcher: CouncilDispatcher,
         stages: Optional[List[PipelineStage]] = None,
-        strip_conversational_fillers: bool = False,
+        strip_conversational_fillers: bool = True,
     ) -> None:
         self.dispatcher = dispatcher
         if stages is not None:

@@ -206,7 +206,7 @@ class FeistbackEngine:
         prompt: str,
         test_inputs: Optional[List[Any]] = None,
         max_new_tokens: int = 32,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         no_repeat_ngram_size: int = 3,
         use_bytecode_cache: bool = True,
     ) -> EngineResult:
@@ -227,7 +227,7 @@ class FeistbackEngine:
 
         # 2. Canonicalize signature
         canonical_prompt, inv_map = canonicalize_signature(prompt_clean)
-        prompt_to_gen = canonical_prompt if inv_map else prompt_clean
+        prompt_to_gen = canonical_prompt
         canonical_sig_key = prompt_to_gen.strip()
 
         # 3. Check Layer B Universal JIT Bytecode Cache

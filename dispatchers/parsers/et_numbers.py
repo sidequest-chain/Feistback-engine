@@ -50,7 +50,7 @@ SYNTHESIS_PATTERNS: List[str] = [
 _WORDS_REGEX = "|".join(re.escape(w) for w in sorted(ESTONIAN_WORDS_TO_INT.keys(), key=len, reverse=True))
 
 _QUANTIFIER_PATTERN = re.compile(
-    rf"\b(?:{_WORDS_REGEX}|\d+)\s+(?:arvu|arvud|arvude|arvudel|numbrit|numbrid|numbrite|numbritel|tükki|väärtust)\b",
+    rf"\b(?:{_WORDS_REGEX}|\d+)\s+(?:arvu|arvud|arvude|arvudel|numbrit|numbrid|numbrite|numbritel|väärtust)\b",
     re.IGNORECASE,
 )
 
@@ -95,7 +95,7 @@ def extract_numbers(text: str) -> List[Union[int, float]]:
     Extracts numerical values (integers and floats, including Estonian verbal floats,
     commas/dots, negative numbers, hex format, and number words) in strict left-to-right order.
     Returns integer values as int and floating point values as float.
-    Filters out numeral quantifiers modifying count nouns (e.g. 'kolm arvu', 'kaks numbrit').
+    Filters out numeral quantifiers modifying meta-count nouns (e.g. 'kolm arvu', 'kaks numbrit').
     """
     cleaned_text = _QUANTIFIER_PATTERN.sub(" ", text)
     numbers: List[Union[int, float]] = []

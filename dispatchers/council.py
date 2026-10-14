@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+import re
 import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -42,6 +43,30 @@ KERNEL_FUSION_MAP: Dict[str, str] = {
 }
 
 CONFIRMATION_WORDS = {"jah", "jaa", "jep", "okei", "ok", "yes", "ja", "davai", "sobib"}
+
+_CANONICAL_NUM_TOKENS = ("10", "20", "30", "40")
+_NUM_LITERAL_RE = re.compile(r"(?<![a-zA-ZäöõüÄÖÕÜ0-9_])-?\d+(?:\.\d+)?(?![a-zA-Z0-9_])")
+
+
+def canonicalize_query_numbers(query: str) -> str:
+    """
+    Replaces multi-digit or floating-point literals with canonical single-token
+    integers (10, 20, 30, 40) for neural intent classification, eliminating BPE
+    subword fragmentation on large numbers while `extract_numbers` preserves exact
+    numerical values for VM execution.
+    """
+    matches = list(_NUM_LITERAL_RE.finditer(query))
+    if not matches or len(matches) > len(_CANONICAL_NUM_TOKENS):
+        return query
+    idx = 0
+
+    def _repl(_m: re.Match) -> str:
+        nonlocal idx
+        tok = _CANONICAL_NUM_TOKENS[idx]
+        idx += 1
+        return tok
+
+    return _NUM_LITERAL_RE.sub(_repl, query)
 
 
 def get_expected_args_count(signature: str) -> int:
@@ -80,7 +105,7 @@ class CouncilDispatcher(BaseDispatcher):
         tokenizer_path: Optional[str] = None,
         cache_path: str = "cache/learned_intents.json",
         min_cache_margin: float = 0.75,
-        min_exec_margin: float = 0.50,
+        min_exec_margin: float = 0.65,
         device: Optional[str] = None,
     ) -> None:
         self.engine = engine
@@ -151,7 +176,8 @@ class CouncilDispatcher(BaseDispatcher):
         if self.expert_model is None or self.expert_tokenizer is None:
             return None
 
-        prompt_str = f"<|user|> {user_query} <|contract|>"
+        canon_query = canonicalize_query_numbers(user_query)
+        prompt_str = f"<|user|> {canon_query} <|contract|>"
         prompt_ids = self.expert_tokenizer.encode(prompt_str).ids
         prompt_tensor = torch.tensor([prompt_ids], device=self.device, dtype=torch.long)
         eos_id = self.expert_tokenizer.token_to_id("<|endoftext|>")

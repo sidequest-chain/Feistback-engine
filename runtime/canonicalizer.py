@@ -15,6 +15,10 @@ from typing import Dict, Tuple
 
 KNOWN_SINGLE_VARS = {"n", "x", "val", "num", "value", "a", "k", "item", "target", "elem"}
 
+CANONICAL_FN_ALIASES: Dict[str, str] = {
+    "bitwise_xor_mask_1": "bitwise_xor_mask_2",
+}
+
 
 def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
     """
@@ -42,8 +46,13 @@ def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
         return prompt, inv_map
 
     fn_node = tree.body[0]
+    fn_aliased = False
+    if fn_node.name in CANONICAL_FN_ALIASES:
+        fn_node.name = CANONICAL_FN_ALIASES[fn_node.name]
+        fn_aliased = True
+
     args = fn_node.args.args
-    if not args:
+    if not args and not fn_aliased:
         return prompt, inv_map
 
     num_args = len(args)
@@ -62,7 +71,7 @@ def canonicalize_signature(prompt: str) -> Tuple[str, Dict[str, str]]:
             inv_map[target] = arg.arg
             arg.arg = target
 
-    if not inv_map:
+    if not inv_map and not fn_aliased:
         return prompt, inv_map
 
     canonical_header = ast.unparse(fn_node).split("\n")[0]
@@ -85,6 +94,7 @@ def decanonicalize_code(completion: str, inv_map: Dict[str, str]) -> str:
 
 __all__ = [
     "KNOWN_SINGLE_VARS",
+    "CANONICAL_FN_ALIASES",
     "canonicalize_signature",
     "decanonicalize_code",
 ]
