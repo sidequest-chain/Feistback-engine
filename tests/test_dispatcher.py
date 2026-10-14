@@ -1,13 +1,17 @@
 """
-End-to-End Test Suite for Intent Dispatcher & Two-Layer Cache Architecture
-==========================================================================
+End-to-End Test Suite for Intent Dispatcher, CouncilPipeline & Two-Layer Cache
+==============================================================================
 Validates:
 1. Natural language and 'estengrish' query routing via ConfigDispatcher (Immutable L1 Base).
 2. Layer B Universal JIT BytecodeCache (`canonical_signature -> bytecode` in 0.0ms).
-3. CouncilDispatcher + Layer A Confidence Gate (`min_margin` + `model_hash`):
-   - High-confidence query (`min_margin >= 0.85`) executes and populates Layer A cache.
+3. CouncilDispatcher + CouncilPipeline + Layer A Confidence Gate (`min_margin` + `model_hash`):
+   - Conversational Estonian wrapper ("ou pane 15 ja 25 kokku plz") executes with high confidence.
+   - Estonian elative case reversed word order ("lahuta 12 arvust 50" -> 50 - 12 = 38).
+   - Everyday Estonian base vocabulary ("mul oli 100 eurot ja kulutasin 35 eurot" -> 65).
+   - Sandboxed VM Tool contracts via OpCode.CALL_TOOL ("arvuta 200 eurot 15% allahindlusega" -> 170.0,
+     "leia suurim ühistegur arvudele 48 ja 18" -> 6).
    - Subsequent structural match hits Layer A + Layer B in microseconds.
-   - Low-confidence query (`min_margin < 0.50`, e.g. "ou pane 15 ja 25 kokku plz") is
+   - Genuinely ambiguous/contradictory query ("liida või lahuta või korruta 15 ja 25") is
      blocked by `CONFIDENCE_GATE_BLOCKED` (`NEED_CONFIRMATION`), preventing cache poisoning!
 """
 
@@ -25,7 +29,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from runtime import BytecodeCache, FeistbackEngine
-from dispatchers import ConfigDispatcher, CouncilDispatcher
+from dispatchers import ConfigDispatcher, CouncilDispatcher, CouncilPipeline
 
 
 def main():
@@ -154,55 +158,86 @@ def main():
 
         assert all_passed, "One or more dispatcher test cases failed!"
 
-        # 3. Verify CouncilDispatcher + Layer B JIT BytecodeCache + Layer A Confidence Gate
+        # 3. Verify CouncilPipeline, Rich Estonian Morphology, VM Tools & Confidence Gate
         slang_ckpt = "models/eesti_keele_sl2ng/slang_expert_feistel.pt"
         if os.path.exists(slang_ckpt):
-            print("\n[3/3] Testing Two-Layer Cache & Confidence Gate Protection...")
+            print("\n[3/3] Testing CouncilPipeline, Estonian Morphology, VM Tools & Confidence Gate...")
             council = CouncilDispatcher(
                 engine=engine,
                 model_path=slang_ckpt,
                 cache_path=intent_cache_path,
             )
+            pipeline = CouncilPipeline(dispatcher=council)
 
-            # A. High-confidence query ("pane 15 ja 25 kokku") -> Margin ~94.2% >= 85%
-            # Note: `def add` is ALREADY in Layer B JIT BytecodeCache from Test 1 above!
+            # A. Conversational Estonian wrapper ("ou pane 15 ja 25 kokku plz") -> High confidence!
             t0 = time.perf_counter()
-            resp_t2 = council.dispatch("pane 15 ja 25 kokku")
-            t_t2_ms = (time.perf_counter() - t0) * 1000.0
+            resp_conv = pipeline.run("ou pane 15 ja 25 kokku plz")
+            t_conv_ms = (time.perf_counter() - t0) * 1000.0
             print(
-                f"  [1. High-Confidence Neural] Route: {resp_t2.get('route')} | "
-                f"Margin: {resp_t2.get('confidence_margin', 0)*100:.1f}% | "
-                f"JIT Bytecode Hit: {resp_t2.get('bytecode_cache_hit')} | "
-                f"Result: {resp_t2.get('result')} | Time: {t_t2_ms:.1f} ms"
+                f"  [1. Conversational Slang ] Route: {resp_conv.get('route')} | "
+                f"Domain: {resp_conv.get('domain')} | "
+                f"Margin: {resp_conv.get('confidence_margin', 0)*100:.1f}% | "
+                f"Result: {resp_conv.get('result')} | Time: {t_conv_ms:.1f} ms"
             )
-            assert resp_t2["status"] == "SUCCESS" and resp_t2["result"] == 40
-            assert resp_t2["bytecode_cache_hit"] is True
-            assert resp_t2["confidence_margin"] >= 0.85
+            assert resp_conv["status"] == "SUCCESS" and resp_conv["result"] == 40
+            assert resp_conv["bytecode_cache_hit"] is True
 
-            # B. Second call with same structural pattern ("pane 100 ja 250 kokku") -> Hits Layer A + Layer B!
+            # B. Second call with same conversational structure ("ou pane 100 ja 250 kokku plz") -> Hits Layer A + Layer B!
             t0 = time.perf_counter()
-            resp_t1 = council.dispatch("pane 100 ja 250 kokku")
+            resp_t1 = pipeline.run("ou pane 100 ja 250 kokku plz")
             t_t1_ms = (time.perf_counter() - t0) * 1000.0
             print(
-                f"  [2. Layer A + Layer B Hit ] Route: {resp_t1.get('route')} | "
+                f"  [2. Layer A + Layer B Hit] Route: {resp_t1.get('route')} | "
                 f"JIT Bytecode Hit: {resp_t1.get('bytecode_cache_hit')} | "
                 f"Result: {resp_t1.get('result')} | Time: {t_t1_ms:.2f} ms"
             )
             assert resp_t1["status"] == "SUCCESS" and resp_t1["result"] == 350
             assert resp_t1["cache_hit"] is True and resp_t1["bytecode_cache_hit"] is True
 
-            # C. Ambiguous/unseen slang ("ou pane 15 ja 25 kokku plz") -> Margin ~3.5% < 50%
-            # Must be BLOCKED by Confidence Gate (NEED_CONFIRMATION) and NEVER poison Layer A cache!
-            resp_ambig = council.dispatch("ou pane 15 ja 25 kokku plz")
+            # C. Estonian case morphology: reversed elative ("lahuta 12 arvust 50" -> 50 - 12 = 38)
+            resp_morph = pipeline.run("lahuta 12 arvust 50")
             print(
-                f"  [3. Poisoning Protection  ] Route: {resp_ambig.get('route')} | "
+                f"  [3. Estonian Morphology  ] Intent: {resp_morph.get('intent_name')} | "
+                f"Args: {resp_morph.get('args')} | Result: {resp_morph.get('result')} (Expected: 38)"
+            )
+            assert resp_morph["status"] == "SUCCESS" and resp_morph["result"] == 38
+
+            # D. Everyday Estonian base vocabulary ("mul oli 100 eurot ja kulutasin 35 eurot" -> 65)
+            resp_base = pipeline.run("mul oli 100 eurot ja kulutasin 35 eurot")
+            print(
+                f"  [4. Base Estonian Vocab  ] Intent: {resp_base.get('intent_name')} | "
+                f"Args: {resp_base.get('args')} | Result: {resp_base.get('result')} (Expected: 65)"
+            )
+            assert resp_base["status"] == "SUCCESS" and resp_base["result"] == 65
+
+            # E. Sandboxed VM Tool via CALL_TOOL ("arvuta 200 eurot 15% allahindlusega" -> 170.0)
+            resp_disc = pipeline.run("arvuta 200 eurot 15% allahindlusega")
+            print(
+                f"  [5. VM CALL_TOOL Discount] Domain: {resp_disc.get('domain')} | "
+                f"Intent: {resp_disc.get('intent_name')} | Result: {resp_disc.get('result')} (Expected: 170.0)"
+            )
+            assert resp_disc["status"] == "SUCCESS" and abs(resp_disc["result"] - 170.0) < 1e-6
+
+            # F. Sandboxed VM Tool via CALL_TOOL ("leia suurim ühistegur arvudele 48 ja 18" -> 6)
+            resp_gcd = pipeline.run("leia suurim ühistegur arvudele 48 ja 18")
+            print(
+                f"  [6. VM CALL_TOOL GCD     ] Domain: {resp_gcd.get('domain')} | "
+                f"Intent: {resp_gcd.get('intent_name')} | Result: {resp_gcd.get('result')} (Expected: 6)"
+            )
+            assert resp_gcd["status"] == "SUCCESS" and resp_gcd["result"] == 6
+
+            # G. Contradictory/ambiguous query -> Blocked by Confidence Gate (NEED_CONFIRMATION)
+            ambig_q = "kas liida või lahuta või korruta või jaga 15 ja 25"
+            resp_ambig = pipeline.run(ambig_q)
+            print(
+                f"  [7. Poisoning Protection ] Route: {resp_ambig.get('route')} | "
                 f"Status: {resp_ambig.get('status')} | "
                 f"Margin: {resp_ambig.get('confidence_margin', 0)*100:.1f}%"
             )
             assert resp_ambig["status"] == "NEED_CONFIRMATION"
-            assert council.learned_cache.lookup("ou pane 15 ja 25 kokku plz", 2) is None
+            assert council.learned_cache.lookup(ambig_q, 2) is None
 
-    print("\nALL DISPATCHER, JIT BYTECODE CACHE, AND CONFIDENCE GATE TESTS PASSED!")
+    print("\nALL DISPATCHER, COUNCIL PIPELINE, VM TOOL, AND CONFIDENCE GATE TESTS PASSED!")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@ Validates:
 4. Stack manipulation opcodes (DROP, SWAP, OVER, ROT).
 5. Infinite loop gas limit protection (RuntimeExecutionError).
 6. Nested if/elif/else control flow, boolean operations (and/or), and floats (PUSH_FLOAT).
-7. Execution latency benchmarks and 100% mathematical parity with native Python.
+7. Sandboxed ToolRegistry and OpCode.CALL_TOOL execution (built-in and custom tools).
+8. Execution latency benchmarks and 100% mathematical parity with native Python.
 """
 
 import math
@@ -24,6 +25,7 @@ if REPO_ROOT not in sys.path:
 
 from runtime.vm.opcodes import OpCode
 from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
+from runtime.vm.tools import ToolRegistry
 from runtime.compiler import ASTCompiler, compile_to_vm
 
 
@@ -189,6 +191,46 @@ def scale_val(x: float) -> float:
     print("[PASS] nested_branching_and_bool_ops: nested if/elif/else, and/or, and PUSH_FLOAT verified")
 
 
+def test_call_tool_and_registry():
+    """Validates OpCode.CALL_TOOL with built-in tools and custom registered tools."""
+    compiler = ASTCompiler()
+    vm = MiniStackVM()
+
+    # 1. Built-in tools: gcd, lcm, discount, vat_add, clamp, is_prime
+    code_tools = """
+def invoice_logic(price: float, disc_pct: float, vat_pct: float) -> float:
+    discounted = discount(price, disc_pct)
+    return vat_add(discounted, vat_pct)
+"""
+    bc_tools = compiler.compile(code_tools)
+    res = vm.execute(bc_tools, [200.0, 15.0, 22.0])
+    # 200 * 0.85 = 170.0; 170.0 * 1.22 = 207.4
+    assert abs(res - 207.4) < 1e-6, f"Tool pipeline mismatch: {res} != 207.4"
+
+    # Verify assembly/disassembly roundtrip with CALL_TOOL
+    disasm = vm.disassemble(bc_tools)
+    assert "CALL_TOOL      discount" in disasm
+    assert "CALL_TOOL      vat_add" in disasm
+    raw_bytes = MiniStackVM.assemble_mnemonics("LOAD_ARG 0 LOAD_ARG 1 CALL_TOOL gcd RET")
+    assert vm.execute(raw_bytes, [48, 18]) == 6
+
+    # 2. Custom isolated ToolRegistry
+    custom_reg = ToolRegistry()
+
+    @custom_reg.register("manhattan_dist", arity=4, description="2D Manhattan distance")
+    def _manhattan(x1: int, y1: int, x2: int, y2: int) -> int:
+        return abs(int(x1) - int(x2)) + abs(int(y1) - int(y2))
+
+    custom_compiler = ASTCompiler(tool_registry=custom_reg)
+    custom_vm = MiniStackVM(tool_registry=custom_reg)
+    bc_custom = custom_compiler.compile(
+        "def route_cost(x1, y1, x2, y2):\n    return manhattan_dist(x1, y1, x2, y2) * 2"
+    )
+    assert custom_vm.execute(bc_custom, [1, 2, 5, 9]) == (4 + 7) * 2
+
+    print("[PASS] call_tool_and_registry: OpCode.CALL_TOOL + ToolRegistry verified (built-in & custom)")
+
+
 def test_stack_operations():
     """Validates stack manipulation instructions: DROP, SWAP, OVER, ROT."""
     vm = MiniStackVM()
@@ -240,6 +282,7 @@ def main():
     test_calc_complex()
     test_calc_with_locals()
     test_nested_branching_and_bool_ops()
+    test_call_tool_and_registry()
     test_stack_operations()
     test_gas_limit_protection()
 

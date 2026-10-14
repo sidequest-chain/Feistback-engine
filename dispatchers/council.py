@@ -30,13 +30,15 @@ from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.registry import ModelRegistry
 
 
-# Tier 3 Kernel Fusion templates for compound arithmetic routines synthesized by Language Expert
+# Tier 3 Kernel Fusion templates for compound arithmetic and morphological order routines
 KERNEL_FUSION_MAP: Dict[str, str] = {
     "sum3_sub": "def sum3_sub(a: int, b: int, c: int, d: int) -> int:\n    return a + b + c - d",
     "add_mul": "def add_mul(a: int, b: int, c: int) -> int:\n    return (a + b) * c",
     "mul_add": "def mul_add(a: int, b: int, c: int) -> int:\n    return a * b + c",
     "sub_mul": "def sub_mul(a: int, b: int, c: int) -> int:\n    return (a - b) * c",
     "sum_of_squares": "def sum_of_squares(a: int, b: int) -> int:\n    return a * a + b * b",
+    "sub_rev": "def sub_rev(a: int, b: int) -> int:\n    return b - a",
+    "div_rev": "def div_rev(a: int, b: int) -> int:\n    return b // a",
 }
 
 CONFIRMATION_WORDS = {"jah", "jaa", "jep", "okei", "ok", "yes", "ja", "davai", "sobib"}
@@ -77,7 +79,7 @@ class CouncilDispatcher(BaseDispatcher):
         model_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
         cache_path: str = "cache/learned_intents.json",
-        min_cache_margin: float = 0.85,
+        min_cache_margin: float = 0.75,
         min_exec_margin: float = 0.50,
         device: Optional[str] = None,
     ) -> None:
@@ -120,7 +122,7 @@ class CouncilDispatcher(BaseDispatcher):
                 ckpt = torch.load(mp, map_location=self.device)
                 cfg = ckpt.get("config", {})
                 self.expert_model = PureFeistelLM(
-                    vocab_size=cfg.get("vocab_size", 1327),
+                    vocab_size=cfg.get("vocab_size", 1801),
                     d_model=cfg.get("d_model", 512),
                     num_layers=cfg.get("num_layers", 12),
                     max_seq_len=cfg.get("max_seq_len", 128),
@@ -143,7 +145,8 @@ class CouncilDispatcher(BaseDispatcher):
         """
         Invokes eesti_keele_sl2ng micro-model using O(1) recurrent state stepping (L=1)
         to generate structured contract JSON with zero KV-cache, while tracking
-        token-level Top-1 probability (`min_prob`) and Top-1 vs Top-2 margin (`min_margin`).
+        token-level Top-1 probability (`min_prob`) and Top-1 vs Top-2 margin (`min_margin`)
+        strictly across the contract decision tokens (`intent_name`, `strategy`, `signature`).
         """
         if self.expert_model is None or self.expert_tokenizer is None:
             return None
@@ -179,8 +182,11 @@ class CouncilDispatcher(BaseDispatcher):
                     break
 
                 gen_ids.append(tid)
-                step_probs.append(p1)
-                step_margins.append(p1 - p2)
+                # Only record confidence on structural contract tokens prior to `"args"`
+                prefix_str = self.expert_tokenizer.decode(gen_ids)
+                if '"args"' not in prefix_str:
+                    step_probs.append(p1)
+                    step_margins.append(p1 - p2)
 
                 logits, layer_states = self.expert_model(
                     next_tok,
@@ -196,14 +202,23 @@ class CouncilDispatcher(BaseDispatcher):
         if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
             try:
                 contract = json.loads(raw_text[start_brace : end_brace + 1])
-                # Focus confidence measurement on the intent decision region (first 16 tokens)
-                decision_probs = step_probs[:16] if step_probs else [0.0]
-                decision_margins = step_margins[:16] if step_margins else [0.0]
+                decision_probs = step_probs if step_probs else [0.0]
+                decision_margins = step_margins if step_margins else [0.0]
                 contract["confidence"] = round(min(decision_probs), 4)
                 contract["confidence_margin"] = round(min(decision_margins), 4)
                 return contract
             except json.JSONDecodeError:
                 pass
+        return None
+
+    def _resolve_fused_or_tool_code(self, intent_name: str) -> Optional[str]:
+        """Resolves either a KERNEL_FUSION_MAP routine or a registered MiniStackVM CALL_TOOL wrapper."""
+        if intent_name in KERNEL_FUSION_MAP:
+            return KERNEL_FUSION_MAP[intent_name]
+        if self.engine is not None and self.engine.vm.tool_registry.has(intent_name):
+            spec = self.engine.vm.tool_registry.get(intent_name)
+            arg_list = ", ".join(f"arg{i}" for i in range(spec.arity))
+            return f"def {spec.name}({arg_list}):\n    return {spec.name}({arg_list})"
         return None
 
     def _execute_contract(
@@ -216,9 +231,9 @@ class CouncilDispatcher(BaseDispatcher):
         cache_hit: bool = False,
         confidence_margin: float = 1.0,
     ) -> Dict[str, Any]:
-        """Executes code via neural reasoning, Layer B JIT BytecodeCache, or kernel fusion on MiniStackVM."""
+        """Executes code via neural reasoning, Layer B JIT BytecodeCache, or kernel/tool fusion on MiniStackVM."""
         route_label = "TIER_1_LEARNED_CACHE" if cache_hit else "TIER_2_NEURAL_COUNCIL"
-        fused_code = KERNEL_FUSION_MAP.get(intent_name)
+        fused_code = self._resolve_fused_or_tool_code(intent_name)
         if fused_code:
             try:
                 t0_comp = time.perf_counter()
@@ -446,7 +461,7 @@ class CouncilDispatcher(BaseDispatcher):
 
         # Synthesis mode
         if is_synth:
-            fused_code = KERNEL_FUSION_MAP.get(intent_name)
+            fused_code = self._resolve_fused_or_tool_code(intent_name)
             if fused_code:
                 full_code = fused_code
                 gen_lat_s = infer_lat_s

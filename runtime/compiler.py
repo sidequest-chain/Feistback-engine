@@ -4,7 +4,8 @@ AST to MiniStackVM Bytecode Compiler
 Compiles Python AST representations of pure functions into deterministic,
 zero-dependency MiniStackVM bytecode instructions.
 Supports binary/unary math, bitwise ops, boolean short-circuit ops,
-nested conditionals (if/elif/else), local variables, and built-in calls.
+nested conditionals (if/elif/else), local variables, built-in math calls,
+and sandboxed ToolRegistry calls via OpCode.CALL_TOOL.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import ast
 from typing import Any, Dict, List, Optional, Tuple
 
 from runtime.vm.opcodes import OpCode
+from runtime.vm.tools import DEFAULT_TOOL_REGISTRY, ToolRegistry
 
 
 class ASTCompiler:
@@ -20,11 +22,12 @@ class ASTCompiler:
     Compiles Python function ASTs into MiniStackVM executable bytecode.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tool_registry: Optional[ToolRegistry] = None) -> None:
         self.bytecode: List[Any] = []
         self.arg_map: Dict[str, int] = {}
         self.arg_names: List[str] = []
         self.local_map: Dict[str, int] = {}
+        self.tool_registry = tool_registry if tool_registry is not None else DEFAULT_TOOL_REGISTRY
 
     def compile(self, source: str, args_hint: Optional[List[str]] = None) -> List[Any]:
         """
@@ -336,7 +339,7 @@ class ASTCompiler:
             raise NotImplementedError(f"Unsupported unary operator: {op_type.__name__}")
 
     def _compile_call(self, node: ast.Call) -> None:
-        """Compiles math/scientific built-in function calls: abs, min, max, pow, isqrt."""
+        """Compiles math/scientific built-in function calls and registered ToolRegistry calls."""
         fn_name = ""
         if isinstance(node.func, ast.Name):
             fn_name = node.func.id
@@ -402,6 +405,17 @@ class ASTCompiler:
             self._compile_expr(node.args[0])
             self.bytecode.append(OpCode.FLOAT)
 
+        elif self.tool_registry.has(fn_name):
+            spec = self.tool_registry.get(fn_name)
+            if len(node.args) != spec.arity:
+                raise ValueError(
+                    f"Tool '{spec.name}()' requires {spec.arity} arguments, "
+                    f"got {len(node.args)}!"
+                )
+            for arg in node.args:
+                self._compile_expr(arg)
+            self.bytecode.extend([OpCode.CALL_TOOL, spec.tool_id])
+
         else:
             raise NotImplementedError(f"Unsupported function call in VM: '{fn_name}'")
 
@@ -425,7 +439,7 @@ class ASTCompiler:
 
         # 5. Patch jump if false
         orelse_start = len(self.bytecode)
-        self.bytecode[jmp_false_idx] = orelse_start - (jmp_false_idx + 1)
+        self.bytecode[jmp_false_idx] = orelse_start - (jmp_offset_idx := jmp_false_idx) - 1
 
         # 6. Orelse expression
         self._compile_expr(node.orelse)
@@ -435,13 +449,16 @@ class ASTCompiler:
         self.bytecode[jmp_end_idx] = end_ip
 
 
-def compile_to_vm(source: str) -> Tuple[List[Any], List[str]]:
+def compile_to_vm(
+    source: str,
+    tool_registry: Optional[ToolRegistry] = None,
+) -> Tuple[List[Any], List[str]]:
     """
     Convenience function to compile Python source code into MiniStackVM bytecode.
 
     Returns:
         Tuple[List[Any], List[str]]: Compiled bytecode instructions and argument names list.
     """
-    compiler = ASTCompiler()
+    compiler = ASTCompiler(tool_registry=tool_registry)
     bytecode = compiler.compile(source)
     return bytecode, compiler.arg_names

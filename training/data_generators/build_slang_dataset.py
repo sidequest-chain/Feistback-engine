@@ -1,26 +1,17 @@
 """
-Synthetic Slang & Estengrish Dataset Builder for eesti_keele_sl2ng
-==================================================================
-Generates 10,000 high-quality synthetic instruction-contract training pairs
-covering Estonian colloquial speech, IT-slang, Estengrish, and compound operations
-(kernel fusion) for training the dedicated eesti_keele_sl2ng micro-model (RFC-002).
+Synthetic Estonian Language, Morphology, Slang & Tool Dataset Builder (eesti_keele_sl2ng)
+=========================================================================================
+Generates 12,000 high-quality synthetic instruction-contract training pairs covering:
+  1. Multi-number base arithmetic (2,500 pairs)
+  2. IT-slang and Estengrish (2,000 pairs)
+  3. Chained compound operations / Kernel Fusion (3,000 pairs)
+  4. Missing argument queries / Slot-filling (1,000 pairs)
+  5. Estonian case morphology & everyday base vocabulary (2,000 pairs)
+  6. Sandboxed VM Tool contracts: discount, vat_add, pct_of, gcd, lcm (1,500 pairs)
 
-Categories:
-  1. Multi-number base arithmetic (30% -> 3,000 pairs)
-  2. IT-slang and Estengrish (25% -> 2,500 pairs)
-  3. Chained compound operations / Kernel Fusion (35% -> 3,500 pairs)
-  4. Missing argument queries / Slot-filling (10% -> 1,000 pairs)
-
-Output format per line:
-{
-  "instruction": "...",
-  "contract": {
-    "intent_name": "...",
-    "strategy": "single_pass" | "need_input",
-    "signature": "def ... -> int:",
-    "args": [...]
-  }
-}
+Also applies compositional Estonian conversational wrappers ("ou", "kle", "kuule",
+"palun", "plz", "tänks") across categories so the specialist understands both clean
+directives and natural chat speech.
 """
 
 from __future__ import annotations
@@ -28,17 +19,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import random
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 # Fix random seed for strict reproducibility
 random.seed(42)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_FILE = REPO_ROOT / "data" / "slang_train_10k.jsonl"
 
 
 # ==============================================================================
-# Helper generators & number helpers
+# Helper generators & Estonian conversational / number helpers
 # ==============================================================================
 
 EST_NUMBER_WORDS = {
@@ -53,9 +44,41 @@ EST_NUMBER_WORDS = {
     8: "kaheksa",
     9: "üheksa",
     10: "kümme",
+    12: "kaksteist",
     15: "viisteist",
     20: "kakskümmend",
+    25: "kakskümmend viis",
+    50: "viiskümmend",
+    100: "sada",
 }
+
+CONV_PREFIXES = [
+    "ou",
+    "kle",
+    "kuule",
+    "hei",
+    "jou",
+    "palun",
+    "plz",
+    "davai",
+    "oota",
+    "ütle mulle",
+    "arvuta palun",
+    "ou kle",
+    "hei palun",
+    "kuule palun",
+]
+
+CONV_SUFFIXES = [
+    "plz",
+    "pls",
+    "palun",
+    "eks",
+    "tänks",
+    "aitäh",
+    "ruttu",
+    "kiirelt",
+]
 
 
 def format_num_choice(n: int, prob_word: float = 0.15) -> str:
@@ -65,15 +88,28 @@ def format_num_choice(n: int, prob_word: float = 0.15) -> str:
     return str(n)
 
 
+def apply_conversational_wrapper(text: str, prob: float = 0.35) -> str:
+    """Optionally wraps an instruction in natural Estonian conversational prefixes/suffixes."""
+    if random.random() >= prob:
+        return text
+    mode = random.random()
+    if mode < 0.45:
+        return f"{random.choice(CONV_PREFIXES)} {text}"
+    elif mode < 0.80:
+        return f"{text} {random.choice(CONV_SUFFIXES)}"
+    else:
+        return f"{random.choice(CONV_PREFIXES)} {text} {random.choice(CONV_SUFFIXES)}"
+
+
 # ==============================================================================
-# Category 1: Multi-number base arithmetic (30% -> 3,000 pairs)
+# Category 1: Multi-number base arithmetic (2,500 pairs)
 # ==============================================================================
 
-def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
+def generate_category_1(count: int = 2500) -> List[Dict[str, Any]]:
     """Generates multi-number base operations: sums, differences, products of 2, 3, 4 numbers."""
     records: List[Dict[str, Any]] = []
 
-    # 1.1 Two-number sums (600 items)
+    # 1.1 Two-number sums (550 items)
     two_sum_templates = [
         "liida kokku {a} ja {b}",
         "liida {a} ning {b}",
@@ -85,17 +121,22 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "liida kaks arvu: {a} ja {b}",
         "liida {a}-le otsa {b}",
         "pane kokku {a} ja {b}",
+        "pane {a} ja {b} kokku",
+        "viska {a} ja {b} kokku",
+        "löö {a} ja {b} kokku",
         "summeeri {a} ja {b}",
         "arvuta {a} pluss {b}",
         "liida kokku arvud {a} ja {b}",
         "viska kokku kaks numbrit: {a} ja {b}",
         "löö kokku {a} ning {b}",
     ]
-    for _ in range(600):
+    for _ in range(550):
         a = random.randint(1, 150)
         b = random.randint(1, 150)
         tmpl = random.choice(two_sum_templates)
-        instruction = tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        instruction = apply_conversational_wrapper(
+            tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        )
         records.append({
             "instruction": instruction,
             "contract": {
@@ -106,7 +147,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.2 Three-number sums (600 items)
+    # 1.2 Three-number sums (450 items)
     three_sum_templates = [
         "liida kokku {a}, {b} ja {c}",
         "summeeri kolm arvu {a}, {b}, {c}",
@@ -120,15 +161,17 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "arvuta kolme arvu summa: {a}, {b}, {c}",
         "löö kokku kolm arvu: {a}, {b} ja {c}",
     ]
-    for _ in range(600):
+    for _ in range(450):
         a = random.randint(1, 100)
         b = random.randint(1, 100)
         c = random.randint(1, 100)
         tmpl = random.choice(three_sum_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -140,7 +183,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.3 Four-number sums (400 items)
+    # 1.3 Four-number sums (300 items)
     four_sum_templates = [
         "liida neli arvu {a}, {b}, {c} ja {d}",
         "löö punti neli arvu {a}, {b}, {c}, {d}",
@@ -151,14 +194,16 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "liida kokku arvud {a}, {b}, {c} ja {d}",
         "pane kokku neli numbrit: {a}, {b}, {c}, {d}",
     ]
-    for _ in range(400):
+    for _ in range(300):
         nums = [random.randint(1, 80) for _ in range(4)]
         tmpl = random.choice(four_sum_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(nums[0]),
-            b=format_num_choice(nums[1]),
-            c=format_num_choice(nums[2]),
-            d=format_num_choice(nums[3]),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(nums[0]),
+                b=format_num_choice(nums[1]),
+                c=format_num_choice(nums[2]),
+                d=format_num_choice(nums[3]),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -170,7 +215,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.4 Two-number differences (500 items)
+    # 1.4 Two-number differences (450 items)
     two_sub_templates = [
         "lahuta {a}-st {b}",
         "lahuta arvust {a} arv {b}",
@@ -183,11 +228,13 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "arvuta {a} miinus {b}",
         "viska vahe arvude {a} ja {b} vahel",
     ]
-    for _ in range(500):
+    for _ in range(450):
         a = random.randint(10, 200)
         b = random.randint(1, a - 1 if a > 1 else 1)
         tmpl = random.choice(two_sub_templates)
-        instruction = tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        instruction = apply_conversational_wrapper(
+            tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        )
         records.append({
             "instruction": instruction,
             "contract": {
@@ -198,7 +245,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.5 Three-number sequential differences (300 items)
+    # 1.5 Three-number sequential differences (250 items)
     three_sub_templates = [
         "lahuta arvust {a} arvud {b} ja {c}",
         "võta {a}-st maha {b} ja {c}",
@@ -207,15 +254,17 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "arvuta {a} miinus {b} miinus {c}",
         "arvuta kolme arvu järjestikune vahe: {a}, {b} ja {c}",
     ]
-    for _ in range(300):
+    for _ in range(250):
         a = random.randint(50, 300)
         b = random.randint(1, 40)
         c = random.randint(1, 40)
         tmpl = random.choice(three_sub_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -227,7 +276,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.6 Two-number multiplications (350 items)
+    # 1.6 Two-number multiplications (300 items)
     two_mul_templates = [
         "korruta {a} ja {b}",
         "korruta omavahel {a} ja {b}",
@@ -238,11 +287,13 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         "arvuta kahe arvu korrutis: {a} ja {b}",
         "arvuta {a} korda {b}",
     ]
-    for _ in range(350):
+    for _ in range(300):
         a = random.randint(2, 50)
         b = random.randint(2, 50)
         tmpl = random.choice(two_mul_templates)
-        instruction = tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        instruction = apply_conversational_wrapper(
+            tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        )
         records.append({
             "instruction": instruction,
             "contract": {
@@ -253,7 +304,7 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             },
         })
 
-    # 1.7 Three- and four-number multiplications (250 items)
+    # 1.7 Three- and four-number multiplications (200 items)
     multi_mul_templates = [
         ("korruta kolm arvu {a}, {b} ja {c}", 3),
         ("korruta läbi {a}, {b} ja {c}", 3),
@@ -261,14 +312,16 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
         ("korruta neli arvu {a}, {b}, {c} ja {d}", 4),
         ("arvuta nelja arvu korrutis {a}, {b}, {c} ja {d}", 4),
     ]
-    for _ in range(250):
+    for _ in range(200):
         tmpl, count_args = random.choice(multi_mul_templates)
         if count_args == 3:
             nums = [random.randint(2, 15) for _ in range(3)]
-            instruction = tmpl.format(
-                a=format_num_choice(nums[0]),
-                b=format_num_choice(nums[1]),
-                c=format_num_choice(nums[2]),
+            instruction = apply_conversational_wrapper(
+                tmpl.format(
+                    a=format_num_choice(nums[0]),
+                    b=format_num_choice(nums[1]),
+                    c=format_num_choice(nums[2]),
+                )
             )
             records.append({
                 "instruction": instruction,
@@ -281,11 +334,13 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
             })
         else:
             nums = [random.randint(2, 10) for _ in range(4)]
-            instruction = tmpl.format(
-                a=format_num_choice(nums[0]),
-                b=format_num_choice(nums[1]),
-                c=format_num_choice(nums[2]),
-                d=format_num_choice(nums[3]),
+            instruction = apply_conversational_wrapper(
+                tmpl.format(
+                    a=format_num_choice(nums[0]),
+                    b=format_num_choice(nums[1]),
+                    c=format_num_choice(nums[2]),
+                    d=format_num_choice(nums[3]),
+                )
             )
             records.append({
                 "instruction": instruction,
@@ -302,14 +357,14 @@ def generate_category_1(count: int = 3000) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
-# Category 2: IT-slang and Estengrish (25% -> 2,500 pairs)
+# Category 2: IT-slang and Estengrish (2,000 pairs)
 # ==============================================================================
 
-def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
+def generate_category_2(count: int = 2000) -> List[Dict[str, Any]]:
     """Generates IT-slang and Estengrish: clamping, xor, shifts, masks."""
     records: List[Dict[str, Any]] = []
 
-    # 2.1 Clamping / Klembi (700 items)
+    # 2.1 Clamping / Klembi (550 items)
     clamp_templates = [
         "clämbi see counter {val} vahemikku {low} ja {high}",
         "klembi see counter {val} vahemikku {low} ja {high}",
@@ -326,7 +381,7 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
         "piira muutuja {val} min {low} ja max {high} vahele",
         "cap'i counter {val} vahemikku {low} ja {high}",
     ]
-    for _ in range(700):
+    for _ in range(550):
         low = random.randint(0, 50)
         high = random.randint(low + 10, low + 100)
         val = random.choice([
@@ -335,7 +390,7 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
             random.randint(high + 1, high + 40),
         ])
         tmpl = random.choice(clamp_templates)
-        instruction = tmpl.format(val=val, low=low, high=high)
+        instruction = apply_conversational_wrapper(tmpl.format(val=val, low=low, high=high))
         records.append({
             "instruction": instruction,
             "contract": {
@@ -346,7 +401,7 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 2.2 Bitwise XOR / Comb (600 items)
+    # 2.2 Bitwise XOR / Comb (500 items)
     xor_templates = [
         "viska xor {a} ja {b} vahel",
         "viska xor {a} ja {b} vahele",
@@ -361,11 +416,11 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
         "arvuta {a} XOR {b}",
         "lase bitikombinatsioon xorina arvudele {a} ja {b}",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.choice([4, 8, 12, 15, 16, 24, 32, 63, 100, 127, 255, random.randint(1, 128)])
         b = random.choice([1, 2, 4, 7, 8, 15, 31, 64, random.randint(1, 128)])
         tmpl = random.choice(xor_templates)
-        instruction = tmpl.format(a=a, b=b)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
         records.append({
             "instruction": instruction,
             "contract": {
@@ -376,7 +431,7 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 2.3 Bit Shift Left / Right (600 items: 300 left, 300 right)
+    # 2.3 Bit Shift Left / Right (500 items: 250 left, 250 right)
     shift_left_templates = [
         "shifti {val} vasakule {shift} võrra",
         "shifti väärtus {val} vasakule {shift} bitti",
@@ -395,11 +450,11 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
         "nihuta {val} bitte paremale {shift} võrra",
         "nihuta paremale bitte arvul {val} {shift} võrra",
     ]
-    for _ in range(300):
+    for _ in range(250):
         val = random.randint(1, 255)
         shift = random.randint(1, 8)
         tmpl = random.choice(shift_left_templates)
-        instruction = tmpl.format(val=val, shift=shift)
+        instruction = apply_conversational_wrapper(tmpl.format(val=val, shift=shift))
         records.append({
             "instruction": instruction,
             "contract": {
@@ -410,11 +465,11 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
             },
         })
 
-    for _ in range(300):
+    for _ in range(250):
         val = random.randint(16, 512)
         shift = random.randint(1, 6)
         tmpl = random.choice(shift_right_templates)
-        instruction = tmpl.format(val=val, shift=shift)
+        instruction = apply_conversational_wrapper(tmpl.format(val=val, shift=shift))
         records.append({
             "instruction": instruction,
             "contract": {
@@ -425,7 +480,7 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 2.4 Bitwise AND / Masking (600 items)
+    # 2.4 Bitwise AND / Masking (450 items)
     mask_templates = [
         "maski {val} ära maskiga {mask}",
         "pane mask {mask} peale väärtusele {val}",
@@ -438,11 +493,11 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
         "jäta alles bitid arvul {val} maskiga {mask}",
     ]
     common_masks = [1, 3, 7, 15, 31, 63, 127, 255, 1023]
-    for _ in range(600):
+    for _ in range(450):
         val = random.randint(1, 2048)
         mask = random.choice(common_masks)
         tmpl = random.choice(mask_templates)
-        instruction = tmpl.format(val=val, mask=mask)
+        instruction = apply_conversational_wrapper(tmpl.format(val=val, mask=mask))
         records.append({
             "instruction": instruction,
             "contract": {
@@ -458,35 +513,38 @@ def generate_category_2(count: int = 2500) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
-# Category 3: Chained compound operations / Kernel Fusion (35% -> 3,500 pairs)
+# Category 3: Chained compound operations / Kernel Fusion (3,000 pairs)
 # ==============================================================================
 
-def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
+def generate_category_3(count: int = 3000) -> List[Dict[str, Any]]:
     """Generates chained arithmetic operations (kernel fusion): sum3_sub, calc_with_locals, add_mul, etc."""
     records: List[Dict[str, Any]] = []
 
-    # 3.1 sum3_sub: liida 3 ja lahuta 1 (600 items)
+    # 3.1 sum3_sub (500 items)
     sum3_sub_templates = [
         "liida {a}, {b} ja {c} lahuta neist {d}",
         "liida kokku {a}, {b} ja {c} ning lahuta sellest {d}",
         "summeeri {a}, {b} ja {c} ning võta maha {d}",
         "löö punti {a}, {b} ja {c} ning tõmba maha {d}",
+        "liida kolm arvu {a}, {b} ja {c} lahuta sellest {d}",
         "liida kolm arvu {a}, {b}, {c} ja lahuta tulemusest {d}",
         "arvuta ({a} + {b} + {c}) miinus {d}",
         "pane kokku {a}, {b} ja {c} ning lahuta {d}",
         "arvuta kolme arvu summa {a}, {b}, {c} ja lahuta {d}",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.randint(5, 50)
         b = random.randint(5, 50)
         c = random.randint(5, 50)
         d = random.randint(1, 20)
         tmpl = random.choice(sum3_sub_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
-            d=format_num_choice(d),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+                d=format_num_choice(d),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -498,7 +556,7 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 3.2 calc_with_locals: arvuta vahe ruut arvudel a ja b ja liida üks (600 items)
+    # 3.2 calc_with_locals (500 items)
     calc_locals_templates = [
         "arvuta vahe ruut arvudel {a} ja {b} ja liida üks otsa",
         "arvuta vahe ruut arvudel {a} ja {b} ja liida üks",
@@ -509,11 +567,13 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
         "lahuta {a}-st {b}, võta ruutu ja liida üks otsa",
         "leia vahe ruut arvudel {a} ja {b} ning liida üks",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.randint(5, 60)
         b = random.randint(1, 30)
         tmpl = random.choice(calc_locals_templates)
-        instruction = tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        instruction = apply_conversational_wrapper(
+            tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        )
         records.append({
             "instruction": instruction,
             "contract": {
@@ -524,7 +584,7 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 3.3 add_mul: liida a ja b ning korruta c-ga (600 items)
+    # 3.3 add_mul (500 items)
     add_mul_templates = [
         "liida {a} ja {b} ning korruta {c}-ga",
         "liida kokku {a} ja {b} ja korruta tulemus {c}-ga",
@@ -534,15 +594,17 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
         "liida arvud {a} ja {b} ning korruta see {c}-ga",
         "arvuta summa arvudest {a} ja {b} ning korruta {c}-ga",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.randint(1, 40)
         b = random.randint(1, 40)
         c = random.randint(2, 12)
         tmpl = random.choice(add_mul_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -554,7 +616,7 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 3.4 mul_add: fused multiply add (korruta a ja b ning liida c) (600 items)
+    # 3.4 mul_add (500 items)
     mul_add_templates = [
         "korruta {a} ja {b} ning liida {c}",
         "korruta omavahel {a} ja {b} ja pane {c} otsa",
@@ -564,15 +626,17 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
         "arvuta korrutis {a} * {b} ja liida sellele {c}",
         "korruta kokku {a} ja {b} ning summeeri {c}-ga",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.randint(2, 25)
         b = random.randint(2, 25)
         c = random.randint(1, 50)
         tmpl = random.choice(mul_add_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -584,7 +648,7 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 3.5 sub_mul: lahuta a-st b ja korruta c-ga (500 items)
+    # 3.5 sub_mul (500 items)
     sub_mul_templates = [
         "lahuta {a}-st {b} ja korruta {c}-ga",
         "võta {a}-st maha {b} ning korruta tulemus {c}-ga",
@@ -598,10 +662,12 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
         b = random.randint(1, a - 1)
         c = random.randint(2, 10)
         tmpl = random.choice(sub_mul_templates)
-        instruction = tmpl.format(
-            a=format_num_choice(a),
-            b=format_num_choice(b),
-            c=format_num_choice(c),
+        instruction = apply_conversational_wrapper(
+            tmpl.format(
+                a=format_num_choice(a),
+                b=format_num_choice(b),
+                c=format_num_choice(c),
+            )
         )
         records.append({
             "instruction": instruction,
@@ -613,7 +679,7 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
             },
         })
 
-    # 3.6 sum_of_squares: ruutude summa arvudel a ja b (600 items)
+    # 3.6 sum_of_squares (500 items)
     sum_sq_templates = [
         "arvuta ruutude summa arvudel {a} ja {b}",
         "pane ruutu {a} ja {b} ning liida kokku",
@@ -623,11 +689,13 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
         "võta ruutu {a} ja {b} ning liida need",
         "arvuta ruutude summa: arvud {a} ja {b}",
     ]
-    for _ in range(600):
+    for _ in range(500):
         a = random.randint(1, 30)
         b = random.randint(1, 30)
         tmpl = random.choice(sum_sq_templates)
-        instruction = tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        instruction = apply_conversational_wrapper(
+            tmpl.format(a=format_num_choice(a), b=format_num_choice(b))
+        )
         records.append({
             "instruction": instruction,
             "contract": {
@@ -643,16 +711,14 @@ def generate_category_3(count: int = 3500) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
-# Category 4: Missing argument queries / Slot-filling (10% -> 1,000 pairs)
+# Category 4: Missing argument queries / Slot-filling (1,000 pairs)
 # ==============================================================================
 
 def generate_category_4(count: int = 1000) -> List[Dict[str, Any]]:
     """Generates queries with missing arguments requiring clarification (slot-filling)."""
     records: List[Dict[str, Any]] = []
 
-    # Distribution across core operations
     sub_categories = [
-        # (intent, signature, templates, count)
         (
             "add",
             "def add(a: int, b: int) -> int:",
@@ -809,27 +875,297 @@ def generate_category_4(count: int = 1000) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
+# Category 5: Estonian Case Morphology & Everyday Base Vocabulary (2,000 pairs)
+# ==============================================================================
+
+def generate_category_5(count: int = 2000) -> List[Dict[str, Any]]:
+    """
+    Generates Estonian morphological case structures (e.g. reversed elative -st order)
+    and everyday Estonian base vocabulary (arvel, palk, eurot, laos, kulutama, alles jääma, jagama).
+    """
+    records: List[Dict[str, Any]] = []
+
+    # 5.1 Reversed elative subtraction (`sub_rev`: "lahuta A arvust B" -> B - A) (450 items)
+    sub_rev_templates = [
+        "lahuta {a} arvust {b}",
+        "võta {a} maha arvust {b}",
+        "tõmba {a} ära arvust {b}",
+        "lahuta {a} eurot summast {b} eurot",
+        "võta {a} eurot maha arvelt {b} eurot",
+        "lahuta {a} punktidest {b}",
+        "võta {a} tükki ära laoseisust {b}",
+    ]
+    for _ in range(450):
+        a = random.randint(1, 80)
+        b = random.randint(a + 5, 250)
+        tmpl = random.choice(sub_rev_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "sub_rev",
+                "strategy": "single_pass",
+                "signature": "def sub_rev(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    # 5.2 Everyday Estonian addition with nouns & verbs (450 items)
+    everyday_add_templates = [
+        "mul on arvel {a} eurot ja juurde tuleb {b} eurot",
+        "kontol oli {a} eurot ning lisandus {b} eurot",
+        "laos oli {a} tükki ja toodi juurde {b} tükki",
+        "teenisin {a} eurot ja sain {b} eurot preemiat",
+        "korvis on {a} õuna ja panen {b} õuna juurde",
+        "alguses oli {a} inimest ja liitus veel {b} inimest",
+        "arve oli {a} eurot ja lisati {b} eurot",
+    ]
+    for _ in range(450):
+        a = random.randint(5, 300)
+        b = random.randint(5, 200)
+        tmpl = random.choice(everyday_add_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "add",
+                "strategy": "single_pass",
+                "signature": "def add(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    # 5.3 Everyday Estonian subtraction with nouns & verbs (450 items)
+    everyday_sub_templates = [
+        "mul oli {a} eurot ja kulutasin {b} eurot",
+        "palgast {a} eurot läks maha {b} eurot",
+        "arvelt {a} eurot maksti ära {b} eurot, palju alles jäi",
+        "laos oli {a} tükki ja müüdi ära {b} tükki",
+        "mul on {a} eurot ja annan {b} eurot ära",
+        "kogusest {a} võeti ära {b} tükki",
+    ]
+    for _ in range(450):
+        a = random.randint(25, 500)
+        b = random.randint(5, a - 1)
+        tmpl = random.choice(everyday_sub_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "sub",
+                "strategy": "single_pass",
+                "signature": "def sub(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    # 5.4 Everyday Estonian multiplication with nouns & verbs (350 items)
+    everyday_mul_templates = [
+        "ostsin {a} toodet hinnaga {b} eurot tükk",
+        "{a} inimest maksid igaüks {b} eurot",
+        "laos on {a} kasti ja igas kastis on {b} tükki",
+        "töötasin {a} tundi tasuga {b} eurot tund",
+        "paketis on {a} rida ja igas reas {b} kohta",
+    ]
+    for _ in range(350):
+        a = random.randint(2, 40)
+        b = random.randint(2, 50)
+        tmpl = random.choice(everyday_mul_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "mul",
+                "strategy": "single_pass",
+                "signature": "def mul(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    # 5.5 Everyday Estonian integer division (`div`: "jaga A B-ga") (300 items)
+    everyday_div_templates = [
+        "jaga {a} arvuga {b}",
+        "jaga {a} võrdselt {b}-ga",
+        "jaga {a} eurot {b} inimese vahel",
+        "arvuta jagatis {a} jagatud {b}",
+        "jaga {a} tükki {b} kasti vahel",
+        "mitu korda mahub arvust {a} jagamisel {b}-ga",
+    ]
+    for _ in range(300):
+        b = random.randint(2, 20)
+        a = b * random.randint(2, 30)
+        tmpl = random.choice(everyday_div_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "div",
+                "strategy": "single_pass",
+                "signature": "def div(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    assert len(records) == count, f"Expected {count}, got {len(records)}"
+    return records
+
+
+# ==============================================================================
+# Category 6: Sandboxed VM Tool Contracts (discount, vat_add, pct_of, gcd, lcm) (1,500 pairs)
+# ==============================================================================
+
+def generate_category_6(count: int = 1500) -> List[Dict[str, Any]]:
+    """Generates contracts targeting deterministic MiniStackVM CALL_TOOL operations."""
+    records: List[Dict[str, Any]] = []
+
+    # 6.1 Discount tool (350 items)
+    discount_templates = [
+        "arvuta {price} eurot {pct}% allahindlusega",
+        "hind on {price} eurot ja allahindlus on {pct} protsenti",
+        "võta hinnast {price} maha {pct}% soodukas",
+        "tee {price} euro pealt {pct}% ale",
+        "toode maksab {price} eurot, arvuta hind {pct}% soodustusega",
+        "arvuta soodushind kui täishind on {price} ja ale {pct}%",
+    ]
+    for _ in range(350):
+        price = random.choice([20, 40, 50, 80, 100, 120, 150, 200, 250, 500])
+        pct = random.choice([5, 10, 15, 20, 25, 30, 40, 50])
+        tmpl = random.choice(discount_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(price=price, pct=pct))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "discount",
+                "strategy": "single_pass",
+                "signature": "def discount(price: float, pct: float) -> float:",
+                "args": [price, pct],
+            },
+        })
+
+    # 6.2 VAT / Tax addition tool (350 items)
+    vat_templates = [
+        "lisa summale {amount} käibemaks {vat}%",
+        "arvuta {amount} eurot koos {vat}% käibemaksuga",
+        "pane {amount} eurole {vat}% km otsa",
+        "lisa hinnale {amount} käibemaks {vat} protsenti",
+        "arvuta lõpphind kui baashind on {amount} ja käibemaks {vat}%",
+    ]
+    for _ in range(350):
+        amount = random.choice([50, 100, 150, 200, 250, 300, 400, 500, 1000])
+        vat = random.choice([9, 13, 20, 22, 24])
+        tmpl = random.choice(vat_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(amount=amount, vat=vat))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "vat_add",
+                "strategy": "single_pass",
+                "signature": "def vat_add(amount: float, vat_pct: float) -> float:",
+                "args": [amount, vat],
+            },
+        })
+
+    # 6.3 Percentage of total (`pct_of`) (250 items)
+    pct_of_templates = [
+        "mitu protsenti on {part} arvust {total}",
+        "kui suur protsent on {part} tervikust {total}",
+        "arvuta mitu protsenti moodustab {part} summast {total}",
+        "leia protsent: {part} arvust {total}",
+    ]
+    for _ in range(250):
+        total = random.choice([50, 80, 100, 200, 250, 400, 500])
+        part = random.choice([10, 20, 25, 40, 50, 75, 100])
+        tmpl = random.choice(pct_of_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(part=part, total=total))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "pct_of",
+                "strategy": "single_pass",
+                "signature": "def pct_of(part: float, total: float) -> float:",
+                "args": [part, total],
+            },
+        })
+
+    # 6.4 Greatest Common Divisor (`gcd`) (300 items)
+    gcd_templates = [
+        "leia suurim ühistegur arvudele {a} ja {b}",
+        "arvuta SÜT arvudel {a} ja {b}",
+        "mis on arvude {a} ja {b} suurim ühistegur",
+        "leia gcd arvudele {a} ja {b}",
+        "arvuta suurim ühistegur: {a} ja {b}",
+    ]
+    for _ in range(300):
+        factor = random.randint(2, 15)
+        a = factor * random.randint(2, 12)
+        b = factor * random.randint(2, 12)
+        tmpl = random.choice(gcd_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "gcd",
+                "strategy": "single_pass",
+                "signature": "def gcd(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    # 6.5 Least Common Multiple (`lcm`) (250 items)
+    lcm_templates = [
+        "leia väikseim ühiskordne arvudele {a} ja {b}",
+        "arvuta VÜK arvudel {a} ja {b}",
+        "mis on arvude {a} ja {b} väikseim ühiskordne",
+        "leia lcm arvudele {a} ja {b}",
+        "arvuta väikseim ühiskordne: {a} ja {b}",
+    ]
+    for _ in range(250):
+        a = random.randint(2, 24)
+        b = random.randint(2, 24)
+        tmpl = random.choice(lcm_templates)
+        instruction = apply_conversational_wrapper(tmpl.format(a=a, b=b))
+        records.append({
+            "instruction": instruction,
+            "contract": {
+                "intent_name": "lcm",
+                "strategy": "single_pass",
+                "signature": "def lcm(a: int, b: int) -> int:",
+                "args": [a, b],
+            },
+        })
+
+    assert len(records) == count, f"Expected {count}, got {len(records)}"
+    return records
+
+
+# ==============================================================================
 # Main Generation Runner
 # ==============================================================================
 
 def main() -> None:
     print("=" * 80)
-    print("SLANG & ESTENGRISH DATASET BUILDER (eesti_keele_sl2ng)")
+    print("ESTONIAN LANGUAGE, MORPHOLOGY, SLANG & TOOL DATASET BUILDER (eesti_keele_sl2ng)")
     print("=" * 80)
 
-    print("[1/4] Generating Category 1: Multi-number base arithmetic (3,000 pairs)...")
-    cat1 = generate_category_1(3000)
+    print("[1/6] Generating Category 1: Multi-number base arithmetic (2,500 pairs)...")
+    cat1 = generate_category_1(2500)
 
-    print("[2/4] Generating Category 2: IT-slang and Estengrish (2,500 pairs)...")
-    cat2 = generate_category_2(2500)
+    print("[2/6] Generating Category 2: IT-slang and Estengrish (2,000 pairs)...")
+    cat2 = generate_category_2(2000)
 
-    print("[3/4] Generating Category 3: Chained compound operations (3,500 pairs)...")
-    cat3 = generate_category_3(3500)
+    print("[3/6] Generating Category 3: Chained compound operations (3,000 pairs)...")
+    cat3 = generate_category_3(3000)
 
-    print("[4/4] Generating Category 4: Missing arguments / Slot-filling (1,000 pairs)...")
+    print("[4/6] Generating Category 4: Missing arguments / Slot-filling (1,000 pairs)...")
     cat4 = generate_category_4(1000)
 
-    all_records = cat1 + cat2 + cat3 + cat4
+    print("[5/6] Generating Category 5: Estonian morphology & base vocabulary (2,000 pairs)...")
+    cat5 = generate_category_5(2000)
+
+    print("[6/6] Generating Category 6: Sandboxed VM Tool contracts (1,500 pairs)...")
+    cat6 = generate_category_6(1500)
+
+    all_records = cat1 + cat2 + cat3 + cat4 + cat5 + cat6
     print(f"\nTotal raw records collected: {len(all_records):,}")
 
     # Shuffle to guarantee homogeneous distribution across categories

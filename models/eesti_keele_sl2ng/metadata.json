@@ -1,6 +1,6 @@
 {
   "model_type": "BPE",
-  "actual_vocab_size": 1327,
+  "actual_vocab_size": 1801,
   "target_vocab_size": 4096,
   "min_frequency": 2,
   "special_tokens": [
@@ -11,5 +11,5 @@
     "<|contract|>"
   ],
   "source_dataset": "data\\slang_train_10k.jsonl",
-  "train_duration_s": 0.1616
+  "train_duration_s": 0.2327
 }

@@ -14,12 +14,16 @@ from dispatchers.base import (
 from dispatchers.cache_manager import LearnedIntentCache
 from dispatchers.fast_path import ConfigDispatcher
 from dispatchers.council import CouncilDispatcher
+from dispatchers.pipeline import CouncilPipeline, PipelineContext, PipelineStage
 
 __all__ = [
     "BaseDispatcher",
     "LearnedIntentCache",
     "ConfigDispatcher",
     "CouncilDispatcher",
+    "CouncilPipeline",
+    "PipelineContext",
+    "PipelineStage",
     "ESTONIAN_WORDS_TO_INT",
     "SYNTHESIS_PATTERNS",
     "is_synthesis_query",

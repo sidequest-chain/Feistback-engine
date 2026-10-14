@@ -1,7 +1,7 @@
 """
 Deterministic Stack Virtual Machine Opcodes
 ===========================================
-Defines the compact 16-instruction opcode set for MiniStackVM:
+Defines the compact instruction opcode set for MiniStackVM:
 Zero external dependencies (pure Python).
 """
 
@@ -9,7 +9,7 @@ from typing import Dict, Set
 
 
 class OpCode:
-    """Virtual Machine Instruction Set (up to 16 opcodes)."""
+    """Virtual Machine Instruction Set."""
     NOP = 0
     LOAD_ARG = 1      # Argument: arg_index -> PUSH args[arg_index]
     PUSH_CONST = 2    # Argument: const_val -> PUSH const_val
@@ -66,6 +66,9 @@ class OpCode:
     CEIL = 43          # POP a -> PUSH math.ceil(a)
     PUSH_FLOAT = 44    # Argument: 8-byte IEEE-754 float -> PUSH float_val
 
+    # Sandboxed Deterministic Tool Execution
+    CALL_TOOL = 45     # Argument: tool_id_or_name -> POP <arity> args, PUSH tool(*args)
+
 
 OPCODE_NAMES: Dict[int, str] = {
     OpCode.NOP: "NOP",
@@ -113,6 +116,7 @@ OPCODE_NAMES: Dict[int, str] = {
     OpCode.FLOOR: "FLOOR",
     OpCode.CEIL: "CEIL",
     OpCode.PUSH_FLOAT: "PUSH_FLOAT",
+    OpCode.CALL_TOOL: "CALL_TOOL",
 }
 
 NAME_TO_OPCODE: Dict[str, int] = {v: k for k, v in OPCODE_NAMES.items()}
@@ -128,4 +132,5 @@ ARG_OPCODES: Set[int] = {
     OpCode.STORE_LOCAL,
     OpCode.LOAD_LOCAL,
     OpCode.PUSH_FLOAT,
+    OpCode.CALL_TOOL,
 }

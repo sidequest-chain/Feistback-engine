@@ -2,7 +2,7 @@
 Train Slang & Estengrish BPE Tokenizer (4,096 Vocabulary)
 =========================================================
 Trains an isolated 4,096-token Byte Pair Encoding (BPE) tokenizer on the
-synthetic Estonian / IT-slang / Estengrish dataset (data/slang_train_10k.jsonl).
+synthetic Estonian / morphology / IT-slang / tool dataset (data/slang_train_10k.jsonl).
 This decouples the eesti_keele_sl2ng micro-model vocabulary from the 16k code vocabulary,
 guaranteeing efficient byte-level token compression for Estonian morphosyntax and JSON contracts.
 """
@@ -10,7 +10,6 @@ guaranteeing efficient byte-level token compression for Estonian morphosyntax an
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import sys
 import time
@@ -24,9 +23,9 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_PATH = REPO_ROOT / "data" / "slang_train_10k.jsonl"
-OUTPUT_DIR = REPO_ROOT / "checkpoints" / "slang_tokenizer_4k"
+OUTPUT_DIR = REPO_ROOT / "models" / "eesti_keele_sl2ng"
 TOKENIZER_JSON = OUTPUT_DIR / "tokenizer.json"
 
 VOCAB_SIZE = 4096
@@ -49,7 +48,7 @@ def dataset_text_iterator(file_path: Path) -> Iterator[str]:
             instruction = record.get("instruction", "")
             contract = record.get("contract", {})
             contract_str = json.dumps(contract, ensure_ascii=False)
-            formatted_text = f"Instruction: {instruction}\nContract: {contract_str}\n"
+            formatted_text = f"<|user|> {instruction} <|contract|> {contract_str} <|endoftext|>\n"
             yield formatted_text
 
 
@@ -126,10 +125,11 @@ def verify_tokenizer(tokenizer_path: Path) -> None:
     loaded_tok = Tokenizer.from_file(str(tokenizer_path))
 
     test_sentences = [
-        "löö kokku 15 ja 25",
-        "clämbi see counter 105 vahemikku 0 ja 100",
-        "liida kolm arvu 1, 5 ja 6 lahuta sellest 2",
-        "viska xor 12 ja 4 vahel",
+        "ou pane 15 ja 25 kokku plz",
+        "lahuta 12 arvust 50",
+        "arvuta 200 eurot 15% allahindlusega",
+        "mul oli 100 eurot ja kulutasin 35 eurot",
+        "leia suurim ühistegur arvudele 48 ja 18",
     ]
 
     all_matched = True
@@ -155,17 +155,7 @@ def verify_tokenizer(tokenizer_path: Path) -> None:
         print("-" * 80)
 
     assert all_matched, "One or more roundtrip decodings failed!"
-    print("ALL 4 BENCHMARK SENTENCES PASSED 100% ROUNDTRIP VERIFICATION!\n")
-
-    # Inspect specific slang and Estonian words
-    print("=" * 80)
-    print("SLANG WORD SEGMENTATION ANALYSIS")
-    print("=" * 80)
-    specific_words = ["clämbi", "lahuta", "vahemikku", "klembi", "shifti", "maski"]
-    for word in specific_words:
-        enc = loaded_tok.encode(word)
-        print(f"Word: '{word}' -> tokens: {enc.tokens} (IDs: {enc.ids})")
-    print("=" * 80)
+    print("ALL 5 BENCHMARK SENTENCES PASSED 100% ROUNDTRIP VERIFICATION!\n")
 
 
 def main() -> None:

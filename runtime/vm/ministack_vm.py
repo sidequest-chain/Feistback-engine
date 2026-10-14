@@ -12,6 +12,7 @@ import struct
 from typing import Any, Dict, List, Optional, Union
 
 from runtime.vm.opcodes import OpCode, OPCODE_NAMES, NAME_TO_OPCODE, ARG_OPCODES
+from runtime.vm.tools import DEFAULT_TOOL_REGISTRY, ToolRegistry
 
 
 class RuntimeExecutionError(RuntimeError):
@@ -23,12 +24,17 @@ class MiniStackVM:
     """
     Compact stack virtual machine for executing dynamic bytecode programs.
     """
-    def __init__(self, max_steps: int = 100_000):
+    def __init__(
+        self,
+        max_steps: int = 100_000,
+        tool_registry: Optional[ToolRegistry] = None,
+    ):
         self.max_steps = max_steps
+        self.tool_registry = tool_registry if tool_registry is not None else DEFAULT_TOOL_REGISTRY
 
     def execute(
         self,
-        bytecode: List[Any],
+        bytecode: Union[List[Any], bytes, bytearray],
         args: Optional[List[Any]] = None,
         max_steps: Optional[int] = None,
     ) -> Any:
@@ -36,7 +42,7 @@ class MiniStackVM:
         Executes bytecode sequence using supplied register arguments.
 
         Args:
-            bytecode: List of integer opcodes and immediate values.
+            bytecode: List of integer opcodes and immediate values (or raw bytes).
             args: Runtime register arguments (e.g. [a, b]).
 
         Returns:
@@ -453,6 +459,20 @@ class MiniStackVM:
                 a = stack.pop()
                 stack.append(math.ceil(a))
 
+            elif op == OpCode.CALL_TOOL:
+                if ip >= n:
+                    raise IndexError("CALL_TOOL requires tool ID or name operand!")
+                tool_ref = bytecode[ip]
+                ip += 1
+                spec = self.tool_registry.get(tool_ref)
+                if len(stack) < spec.arity:
+                    raise RuntimeError(
+                        f"CALL_TOOL '{spec.name}' requires {spec.arity} stack elements, "
+                        f"only {len(stack)} present!"
+                    )
+                call_args = [stack.pop() for _ in range(spec.arity)][::-1]
+                stack.append(spec.fn(*call_args))
+
             elif op == OpCode.RET:
                 return stack.pop() if stack else 0
 
@@ -491,6 +511,18 @@ class MiniStackVM:
                         lines.append(f"{addr:04d}: LOAD_CONST     {val}")
                     else:
                         lines.append(f"{addr:04d}: LOAD_CONST     ???")
+            elif op == OpCode.CALL_TOOL:
+                if ip < n:
+                    tool_ref = bytecode[ip]
+                    ip += 1
+                    label = (
+                        self.tool_registry.get(tool_ref).name
+                        if self.tool_registry.has(tool_ref)
+                        else str(tool_ref)
+                    )
+                    lines.append(f"{addr:04d}: {name:<14} {label}")
+                else:
+                    lines.append(f"{addr:04d}: {name:<14} ???")
             elif op in ARG_OPCODES:
                 if ip < n:
                     arg = bytecode[ip]
@@ -504,14 +536,19 @@ class MiniStackVM:
         return "\n".join(lines)
 
     @staticmethod
-    def assemble_mnemonics(mnemonics_str: str) -> bytes:
+    def assemble_mnemonics(
+        mnemonics_str: str,
+        tool_registry: Optional[ToolRegistry] = None,
+    ) -> bytes:
         """
         Translates mnemonic assembly text into MiniStackVM executable bytecode bytes.
-        Supports integer operands and IEEE-754 double precision floating-point constants.
+        Supports integer operands, IEEE-754 double precision floating-point constants,
+        and registered CALL_TOOL names/IDs.
 
         Args:
             mnemonics_str: Whitespace/newline delimited mnemonic string
                            (e.g. 'LOAD_ARG 0 LOAD_CONST 2.5 MUL RET').
+            tool_registry: Optional ToolRegistry for resolving CALL_TOOL names.
 
         Returns:
             bytes: MiniStackVM executable bytecode sequence.
@@ -519,6 +556,7 @@ class MiniStackVM:
         Raises:
             ValueError: If an unknown instruction or invalid operand is encountered.
         """
+        registry = tool_registry if tool_registry is not None else DEFAULT_TOOL_REGISTRY
         # Aliases mapping alternative mnemonic names to canonical OpCodes
         aliases: Dict[str, int] = {
             "LOAD_CONST": OpCode.PUSH_CONST,
@@ -539,6 +577,7 @@ class MiniStackVM:
             "CEIL": OpCode.CEIL,
             "PUSH_FLOAT": OpCode.PUSH_FLOAT,
             "LOAD_FLOAT": OpCode.PUSH_FLOAT,
+            "CALL_TOOL": OpCode.CALL_TOOL,
         }
 
         # Tokenize while ignoring comments (# ...) and optional address prefixes (e.g. '0000:')
@@ -584,13 +623,22 @@ class MiniStackVM:
                 "BRANCH_IF",
                 "PUSH_FLOAT",
                 "LOAD_FLOAT",
+                "CALL_TOOL",
             ):
                 if idx >= n:
                     raise ValueError(f"Instruction '{tok}' requires an operand, but reached end of input!")
                 arg_tok = cleaned_tokens[idx]
                 idx += 1
 
-                if op == OpCode.PUSH_FLOAT or tok in ("LOAD_CONST", "PUSH_CONST", "PUSH_FLOAT", "LOAD_FLOAT"):
+                if op == OpCode.CALL_TOOL:
+                    if registry.has(arg_tok):
+                        spec = registry.get(arg_tok)
+                        bytecode_bytes.append(spec.tool_id % 256)
+                    elif arg_tok.isdigit():
+                        bytecode_bytes.append(int(arg_tok) % 256)
+                    else:
+                        raise ValueError(f"Unknown tool reference for CALL_TOOL: '{arg_tok}'")
+                elif op == OpCode.PUSH_FLOAT or tok in ("LOAD_CONST", "PUSH_CONST", "PUSH_FLOAT", "LOAD_FLOAT"):
                     is_float = False
                     try:
                         if "." in arg_tok or "e" in arg_tok.lower():
