@@ -2,27 +2,27 @@
 Feistback Production Engine Interface
 =====================================
 Unified neuro-symbolic engine coupling PureFeistelLM code generation,
-AST canonicalization adapter, ASTCompiler bytecode generation, and
-deterministic MiniStackVM execution with sub-microsecond verification.
+AST canonicalization adapter, ASTCompiler bytecode generation,
+Layer B Universal JIT Bytecode Cache, and deterministic MiniStackVM
+execution with sub-microsecond verification.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 import os
 from pathlib import Path
-import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import torch
 
+from runtime.bytecode_cache import BytecodeCache, compute_file_sha256
 from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
-from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.compiler import ASTCompiler
-from runtime.vm.ministack_vm import MiniStackVM
+from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.registry import ModelRegistry
+from runtime.vm.ministack_vm import MiniStackVM
 
 
 # Safe restricted builtins for Python reference verification
@@ -84,6 +84,7 @@ class EngineResult:
     latency_vm_avg_us: float
     verified: bool
     arg_names: List[str] = field(default_factory=list)
+    bytecode_cache_hit: bool = False
 
 
 class FeistbackEngine:
@@ -97,11 +98,15 @@ class FeistbackEngine:
         compiler: Optional[ASTCompiler] = None,
         vm: Optional[MiniStackVM] = None,
         device: str = "cuda",
+        bytecode_cache: Optional[BytecodeCache] = None,
+        model_hash: str = "default",
     ) -> None:
         self.model = model
         self.compiler = compiler or ASTCompiler()
         self.vm = vm or MiniStackVM()
         self.device = device
+        self.model_hash = model_hash
+        self.bytecode_cache = bytecode_cache or BytecodeCache(model_hash=model_hash)
 
     @classmethod
     def from_registry(
@@ -115,10 +120,18 @@ class FeistbackEngine:
         """
         reg = registry or ModelRegistry()
         dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        model, _ = reg.load_model(model_name, device=dev)
+        model, cfg = reg.load_model(model_name, device=dev)
+        weights_file = Path(cfg.get("_model_dir", "")) / cfg.get("weights", "")
+        m_hash = compute_file_sha256(weights_file)
         compiler = ASTCompiler()
         vm = MiniStackVM()
-        return cls(model=model, compiler=compiler, vm=vm, device=dev)
+        return cls(
+            model=model,
+            compiler=compiler,
+            vm=vm,
+            device=dev,
+            model_hash=m_hash,
+        )
 
     @classmethod
     def from_checkpoint(
@@ -177,9 +190,16 @@ class FeistbackEngine:
         else:
             raise FileNotFoundError(f"Checkpoint file '{checkpoint_path}' does not exist!")
 
+        m_hash = compute_file_sha256(checkpoint_path)
         compiler = ASTCompiler()
         vm = MiniStackVM()
-        return cls(model=model, compiler=compiler, vm=vm, device=dev)
+        return cls(
+            model=model,
+            compiler=compiler,
+            vm=vm,
+            device=dev,
+            model_hash=m_hash,
+        )
 
     def generate_and_verify(
         self,
@@ -188,14 +208,15 @@ class FeistbackEngine:
         max_new_tokens: int = 32,
         temperature: float = 0.1,
         no_repeat_ngram_size: int = 3,
+        use_bytecode_cache: bool = True,
     ) -> EngineResult:
         """
         Executes end-to-end neuro-symbolic code generation and verification:
         1. Canonicalizes prompt signature to high-affinity orthogonal registers.
-        2. Generates code via PureFeistelLM (0 bytes KV cache).
-        3. Decanonicalizes output variable names.
-        4. Compiles AST into MiniStackVM bytecode.
-        5. Executes MiniStackVM and verifies mathematical equivalence.
+        2. Checks Layer B JIT Bytecode Cache (`canonical_signature -> bytecode`).
+        3. On cache miss, generates code via PureFeistelLM (0 bytes KV cache) and compiles AST.
+        4. Executes MiniStackVM and verifies mathematical equivalence.
+        5. Stores verified bytecode into Layer B JIT cache.
         """
         # 1. Normalize prompt
         prompt_raw = prompt.replace("\\n", "\n").replace("\\t", "\t").strip()
@@ -207,64 +228,81 @@ class FeistbackEngine:
         # 2. Canonicalize signature
         canonical_prompt, inv_map = canonicalize_signature(prompt_clean)
         prompt_to_gen = canonical_prompt if inv_map else prompt_clean
+        canonical_sig_key = prompt_to_gen.strip()
 
-        # 3. Neural Generation
-        t0_gen = time.perf_counter()
-        gen_raw, token_ids = self.model.generate(
-            prompt=prompt_to_gen,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=0.85,
-            repetition_penalty=1.0,
-            no_repeat_ngram_size=no_repeat_ngram_size,
-            early_stopping=True,
-        )
-        t_gen_s = time.perf_counter() - t0_gen
-
-        # 4. Decanonicalize and construct full code
-        body_code = decanonicalize_code(gen_raw, inv_map) if inv_map else gen_raw
-        indented_body = "\n".join("    " + line.strip() for line in body_code.split("\n") if line.strip())
-        full_code = prompt_clean.strip() + "\n" + indented_body
-
-        # 5. AST -> Bytecode Compilation
-        t0_comp = time.perf_counter()
-        compilation_error = None
-        try:
-            bytecode = self.compiler.compile(full_code)
+        # 3. Check Layer B Universal JIT Bytecode Cache
+        cached_bc = self.bytecode_cache.lookup(canonical_sig_key) if use_bytecode_cache else None
+        if cached_bc is not None:
+            gen_raw = cached_bc["canonical_body"]
+            bytecode = list(cached_bc["bytecode"])
+            arg_names = list(cached_bc.get("arg_names", []))
             disassembly = self.vm.disassemble(bytecode)
-            arg_names = self.compiler.arg_names
-        except Exception as e:
-            bytecode = []
-            disassembly = f"Compilation Error: {e}"
-            arg_names = []
-            compilation_error = str(e)
-        t_comp_ms = (time.perf_counter() - t0_comp) * 1000.0
-
-        if compilation_error is not None:
-            return EngineResult(
-                prompt=prompt_clean.strip(),
-                canonical_prompt=canonical_prompt.strip(),
-                inv_map=inv_map,
-                generated_raw=gen_raw,
-                code=full_code,
-                bytecode=[],
-                disassembly=disassembly,
-                test_outcomes=[
-                    TestOutcome(
-                        inputs=test_inputs or [],
-                        vm_result=None,
-                        py_result=None,
-                        matched=False,
-                        latency_us=0.0,
-                        error=compilation_error,
-                    )
-                ],
-                latency_gen_s=t_gen_s,
-                latency_comp_ms=t_comp_ms,
-                latency_vm_avg_us=0.0,
-                verified=False,
-                arg_names=[],
+            t_gen_s = 0.0
+            t_comp_ms = 0.0
+            bc_cache_hit = True
+            body_code = decanonicalize_code(gen_raw, inv_map) if inv_map else gen_raw
+            indented_body = "\n".join("    " + line.strip() for line in body_code.split("\n") if line.strip())
+            full_code = prompt_clean.strip() + "\n" + indented_body
+        else:
+            bc_cache_hit = False
+            # Neural Generation
+            t0_gen = time.perf_counter()
+            gen_raw, _ = self.model.generate(
+                prompt=prompt_to_gen,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=0.85,
+                repetition_penalty=1.0,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+                early_stopping=True,
             )
+            t_gen_s = time.perf_counter() - t0_gen
+
+            # Decanonicalize and construct full code
+            body_code = decanonicalize_code(gen_raw, inv_map) if inv_map else gen_raw
+            indented_body = "\n".join("    " + line.strip() for line in body_code.split("\n") if line.strip())
+            full_code = prompt_clean.strip() + "\n" + indented_body
+
+            # AST -> Bytecode Compilation
+            t0_comp = time.perf_counter()
+            compilation_error = None
+            try:
+                bytecode = self.compiler.compile(full_code)
+                disassembly = self.vm.disassemble(bytecode)
+                arg_names = self.compiler.arg_names
+            except Exception as e:
+                bytecode = []
+                disassembly = f"Compilation Error: {e}"
+                arg_names = []
+                compilation_error = str(e)
+            t_comp_ms = (time.perf_counter() - t0_comp) * 1000.0
+
+            if compilation_error is not None:
+                return EngineResult(
+                    prompt=prompt_clean.strip(),
+                    canonical_prompt=canonical_prompt.strip(),
+                    inv_map=inv_map,
+                    generated_raw=gen_raw,
+                    code=full_code,
+                    bytecode=[],
+                    disassembly=disassembly,
+                    test_outcomes=[
+                        TestOutcome(
+                            inputs=test_inputs or [],
+                            vm_result=None,
+                            py_result=None,
+                            matched=False,
+                            latency_us=0.0,
+                            error=compilation_error,
+                        )
+                    ],
+                    latency_gen_s=t_gen_s,
+                    latency_comp_ms=t_comp_ms,
+                    latency_vm_avg_us=0.0,
+                    verified=False,
+                    arg_names=[],
+                    bytecode_cache_hit=False,
+                )
 
         # 6. Resolve / Auto-generate test inputs
         cases = self._resolve_test_inputs(test_inputs, arg_names)
@@ -320,6 +358,16 @@ class FeistbackEngine:
         avg_vm_us = sum(vm_latencies) / max(1, len(vm_latencies))
         verified = len(test_outcomes) > 0 and all(t.matched for t in test_outcomes)
 
+        # 9. Persist verified canonical signature -> bytecode into Layer B JIT Cache
+        if verified and use_bytecode_cache and not bc_cache_hit:
+            self.bytecode_cache.store(
+                canonical_signature=canonical_sig_key,
+                canonical_body=gen_raw,
+                bytecode=bytecode,
+                arg_names=arg_names,
+                verified=True,
+            )
+
         return EngineResult(
             prompt=prompt_clean.strip(),
             canonical_prompt=canonical_prompt.strip(),
@@ -334,6 +382,7 @@ class FeistbackEngine:
             latency_vm_avg_us=avg_vm_us,
             verified=verified,
             arg_names=arg_names,
+            bytecode_cache_hit=bc_cache_hit,
         )
 
     def _resolve_test_inputs(

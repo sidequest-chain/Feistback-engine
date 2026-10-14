@@ -1,21 +1,18 @@
 """
-Council of Specialties Intent Dispatcher (Tier 2 & Tier 1 L1 Cache)
-===================================================================
-Couples the Self-Hydrating L1 Intent Cache (`LearnedIntentCache`) and the specialized
-`eesti_keele_sl2ng` micro-model (semantic Estonian & IT-slang expert) with the
-PureFeistelLM code generation backbone and MiniStackVM execution sandbox.
-Provides conversational multi-turn slot filling, AST validation, Double-Lock VM
-verification gating, and dynamic contract execution.
+Council of Specialties Intent Dispatcher (Two-Layer Cache & Confidence Gate)
+============================================================================
+Couples the Layer A Semantic Cache (`LearnedIntentCache` with Confidence Margin Gate
+and `model_hash` binding) and the specialized `eesti_keele_sl2ng` micro-model with
+the PureFeistelLM logic engine, Layer B JIT `BytecodeCache`, and `MiniStackVM`.
 """
 
 from __future__ import annotations
 
 import ast
 import json
-import os
 from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 from tokenizers import Tokenizer
@@ -27,7 +24,8 @@ from dispatchers.parsers.et_numbers import (
     is_synthesis_query,
 )
 
-from runtime.engine import FeistbackEngine, EngineResult
+from runtime.bytecode_cache import compute_file_sha256
+from runtime.engine import FeistbackEngine
 from runtime.models.pure_feistel_lm import PureFeistelLM
 from runtime.registry import ModelRegistry
 
@@ -40,6 +38,8 @@ KERNEL_FUSION_MAP: Dict[str, str] = {
     "sub_mul": "def sub_mul(a: int, b: int, c: int) -> int:\n    return (a - b) * c",
     "sum_of_squares": "def sum_of_squares(a: int, b: int) -> int:\n    return a * a + b * b",
 }
+
+CONFIRMATION_WORDS = {"jah", "jaa", "jep", "okei", "ok", "yes", "ja", "davai", "sobib"}
 
 
 def get_expected_args_count(signature: str) -> int:
@@ -64,9 +64,9 @@ def get_expected_args_count(signature: str) -> int:
 
 class CouncilDispatcher(BaseDispatcher):
     """
-    CouncilDispatcher routes queries through the Tier 1 Self-Hydrating LRU Cache
-    and Tier 2 `eesti_keele_sl2ng` micro-model to synthesize formal execution contracts,
-    verifying execution on Tier 3 (`MiniStackVM`) before caching learned patterns.
+    CouncilDispatcher routes queries through the Layer A `LearnedIntentCache`
+    and Tier 2 `eesti_keele_sl2ng` micro-model, enforcing a Confidence Margin Gate
+    (`min_margin`) to prevent semantic cache poisoning and hallucinated execution.
     """
 
     def __init__(
@@ -77,6 +77,8 @@ class CouncilDispatcher(BaseDispatcher):
         model_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
         cache_path: str = "cache/learned_intents.json",
+        min_cache_margin: float = 0.85,
+        min_exec_margin: float = 0.50,
         device: Optional[str] = None,
     ) -> None:
         self.engine = engine
@@ -85,18 +87,27 @@ class CouncilDispatcher(BaseDispatcher):
         self.model_name = model_name
         self.model_path = model_path
         self.tokenizer_path = tokenizer_path
-        self.learned_cache = LearnedIntentCache(cache_path=cache_path)
+        self.min_cache_margin = min_cache_margin
+        self.min_exec_margin = min_exec_margin
         self.expert_model: Optional[PureFeistelLM] = None
         self.expert_tokenizer: Optional[Tokenizer] = None
+        self.expert_model_hash: str = "default"
 
         self._load_expert()
+        self.learned_cache = LearnedIntentCache(
+            cache_path=cache_path,
+            model_hash=self.expert_model_hash,
+            min_confidence_margin=self.min_cache_margin,
+        )
 
     def _load_expert(self) -> None:
         """Loads eesti_keele_sl2ng micro-model weights and tokenizer via ModelRegistry."""
         try:
             if self.model_name in self.registry._models:
-                self.expert_model, _ = self.registry.load_model(self.model_name, device=self.device)
+                self.expert_model, cfg = self.registry.load_model(self.model_name, device=self.device)
                 self.expert_tokenizer = self.registry.load_tokenizer(self.model_name)
+                weights_file = Path(cfg.get("_model_dir", "")) / cfg.get("weights", "")
+                self.expert_model_hash = compute_file_sha256(weights_file)
             elif self.model_path and self.tokenizer_path:
                 mp = Path(self.model_path)
                 if not mp.is_absolute():
@@ -105,6 +116,7 @@ class CouncilDispatcher(BaseDispatcher):
                 if not tp.is_absolute():
                     tp = Path(__file__).resolve().parent.parent / self.tokenizer_path
                 self.expert_tokenizer = Tokenizer.from_file(str(tp))
+                self.expert_model_hash = compute_file_sha256(mp)
                 ckpt = torch.load(mp, map_location=self.device)
                 cfg = ckpt.get("config", {})
                 self.expert_model = PureFeistelLM(
@@ -130,7 +142,8 @@ class CouncilDispatcher(BaseDispatcher):
     def predict_contract(self, user_query: str) -> Optional[Dict[str, Any]]:
         """
         Invokes eesti_keele_sl2ng micro-model using O(1) recurrent state stepping (L=1)
-        to generate structured contract JSON with zero KV-cache.
+        to generate structured contract JSON with zero KV-cache, while tracking
+        token-level Top-1 probability (`min_prob`) and Top-1 vs Top-2 margin (`min_margin`).
         """
         if self.expert_model is None or self.expert_tokenizer is None:
             return None
@@ -141,6 +154,8 @@ class CouncilDispatcher(BaseDispatcher):
         eos_id = self.expert_tokenizer.token_to_id("<|endoftext|>")
 
         gen_ids: List[int] = []
+        step_probs: List[float] = []
+        step_margins: List[float] = []
         max_steps = min(96, self.expert_model.max_seq_len - len(prompt_ids))
 
         with torch.no_grad():
@@ -150,20 +165,28 @@ class CouncilDispatcher(BaseDispatcher):
                 states=None,
                 return_states=True,
             )
-            next_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
-            # 2. Step token-by-token (L=1) with O(1) state updates
+            # 2. Step token-by-token (L=1) with O(1) state updates & confidence tracking
             for _ in range(max_steps):
+                probs = torch.softmax(logits[:, -1, :], dim=-1)
+                top2 = torch.topk(probs, k=2, dim=-1)
+                p1 = top2.values[0, 0].item()
+                p2 = top2.values[0, 1].item()
+                next_tok = top2.indices[:, :1]
                 tid = next_tok.item()
+
                 if tid == eos_id:
                     break
+
                 gen_ids.append(tid)
+                step_probs.append(p1)
+                step_margins.append(p1 - p2)
+
                 logits, layer_states = self.expert_model(
                     next_tok,
                     states=layer_states,
                     return_states=True,
                 )
-                next_tok = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
 
         raw_text = self.expert_tokenizer.decode(gen_ids).strip()
 
@@ -172,7 +195,13 @@ class CouncilDispatcher(BaseDispatcher):
         end_brace = raw_text.rfind("}")
         if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
             try:
-                return json.loads(raw_text[start_brace : end_brace + 1])
+                contract = json.loads(raw_text[start_brace : end_brace + 1])
+                # Focus confidence measurement on the intent decision region (first 16 tokens)
+                decision_probs = step_probs[:16] if step_probs else [0.0]
+                decision_margins = step_margins[:16] if step_margins else [0.0]
+                contract["confidence"] = round(min(decision_probs), 4)
+                contract["confidence_margin"] = round(min(decision_margins), 4)
+                return contract
             except json.JSONDecodeError:
                 pass
         return None
@@ -185,8 +214,9 @@ class CouncilDispatcher(BaseDispatcher):
         user_query: str,
         neural_gen_lat_s: float = 0.0,
         cache_hit: bool = False,
+        confidence_margin: float = 1.0,
     ) -> Dict[str, Any]:
-        """Executes code via neural reasoning or verified kernel fusion on MiniStackVM."""
+        """Executes code via neural reasoning, Layer B JIT BytecodeCache, or kernel fusion on MiniStackVM."""
         route_label = "TIER_1_LEARNED_CACHE" if cache_hit else "TIER_2_NEURAL_COUNCIL"
         fused_code = KERNEL_FUSION_MAP.get(intent_name)
         if fused_code:
@@ -199,13 +229,14 @@ class CouncilDispatcher(BaseDispatcher):
                 vm_res = self.engine.vm.execute(bytecode, args)
                 vm_lat_us = (time.perf_counter() - t0_vm) * 1_000_000.0
 
-                # Double-Lock Verification Gate: persist to L1 learned cache
+                # Double-Lock + Confidence Margin Gate
                 self.learned_cache.record_verified(
                     query=user_query,
                     intent_name=intent_name,
                     target_signature=signature,
                     args_count=len(args),
                     verified_by_vm=True,
+                    confidence_margin=confidence_margin,
                 )
 
                 return {
@@ -218,6 +249,8 @@ class CouncilDispatcher(BaseDispatcher):
                     "result": vm_res,
                     "verified": True,
                     "cache_hit": cache_hit,
+                    "bytecode_cache_hit": True,
+                    "confidence_margin": confidence_margin,
                     "generated_code": fused_code,
                     "bytecode": bytecode,
                     "disassembly": self.engine.vm.disassemble(bytecode),
@@ -235,7 +268,7 @@ class CouncilDispatcher(BaseDispatcher):
         )
         vm_res = engine_res.test_outcomes[0].vm_result if engine_res.test_outcomes else None
 
-        # Double-Lock Verification Gate: persist to L1 cache only if MiniStackVM verified execution
+        # Double-Lock + Confidence Margin Gate: persist to Layer A cache only if VM verified AND margin >= threshold
         if engine_res.verified:
             self.learned_cache.record_verified(
                 query=user_query,
@@ -243,6 +276,7 @@ class CouncilDispatcher(BaseDispatcher):
                 target_signature=signature,
                 args_count=len(args),
                 verified_by_vm=True,
+                confidence_margin=confidence_margin,
             )
 
         return {
@@ -255,12 +289,14 @@ class CouncilDispatcher(BaseDispatcher):
             "result": vm_res,
             "verified": engine_res.verified,
             "cache_hit": cache_hit,
+            "bytecode_cache_hit": engine_res.bytecode_cache_hit,
+            "confidence_margin": confidence_margin,
             "generated_code": engine_res.code,
             "bytecode": engine_res.bytecode,
             "disassembly": engine_res.disassembly,
             "vm_latency_us": engine_res.latency_vm_avg_us,
             "compilation_latency_ms": engine_res.latency_comp_ms,
-            "generation_latency_s": neural_gen_lat_s or engine_res.latency_gen_s,
+            "generation_latency_s": neural_gen_lat_s + engine_res.latency_gen_s,
             "query": user_query,
         }
 
@@ -270,9 +306,24 @@ class CouncilDispatcher(BaseDispatcher):
         pending_intent: Optional[Dict[str, Any]] = None,
         pending_args: Optional[List[Union[int, float]]] = None,
     ) -> Dict[str, Any]:
-        """Dispatches queries using L1 Learned Cache, Tier 2 neural language expert, or pending intent state."""
-        # 1. Resolve pending intent
+        """Dispatches queries using Layer A Cache, Tier 2 neural language expert with Confidence Gate, or pending state."""
+        # 1. Resolve pending intent or user confirmation
         if pending_intent is not None:
+            clean_reply = user_query.strip().lower()
+            if pending_intent.get("_awaiting_confirmation") and clean_reply in CONFIRMATION_WORDS:
+                signature = pending_intent.get("signature", "def add(a: int, b: int) -> int:")
+                intent_name = pending_intent.get("intent_name", "calculation")
+                orig_query = pending_intent.get("_original_query", user_query)
+                args = pending_args or pending_intent.get("args", [])
+                # User explicitly confirmed -> confidence_margin = 1.0
+                return self._execute_contract(
+                    intent_name=intent_name,
+                    signature=signature,
+                    args=args,
+                    user_query=orig_query,
+                    confidence_margin=1.0,
+                )
+
             new_numbers = extract_numbers(user_query)
             args = (pending_args or []) + new_numbers
             signature = pending_intent.get("signature", "def add(a: int, b: int) -> int:")
@@ -297,13 +348,19 @@ class CouncilDispatcher(BaseDispatcher):
                 }
 
             target_args = args[:expected_count]
-            return self._execute_contract(intent_name, signature, target_args, user_query)
+            return self._execute_contract(
+                intent_name=intent_name,
+                signature=signature,
+                args=target_args,
+                user_query=user_query,
+                confidence_margin=float(pending_intent.get("confidence_margin", 1.0)),
+            )
 
         # 2. Check for synthesis request
         is_synth = is_synthesis_query(user_query)
         real_args = extract_numbers(user_query)
 
-        # 3. Check Tier 1 Self-Hydrating L1 Cache before invoking Tier 2 neural expert
+        # 3. Check Layer A Learned Cache before invoking Tier 2 neural expert
         if not is_synth and real_args:
             cached = self.learned_cache.lookup(user_query, len(real_args))
             if cached is not None:
@@ -314,30 +371,24 @@ class CouncilDispatcher(BaseDispatcher):
                     user_query=user_query,
                     neural_gen_lat_s=0.0,
                     cache_hit=True,
+                    confidence_margin=float(cached.get("confidence_margin", 1.0)),
                 )
 
-        # 4. Predict contract via Tier 2 Language Expert (O(1) recurrent step)
+        # 4. Predict contract via Tier 2 Language Expert (O(1) recurrent step + margin measurement)
         t0_infer = time.perf_counter()
         contract = self.predict_contract(user_query)
         infer_lat_s = time.perf_counter() - t0_infer
 
         if contract is None:
-            if len(real_args) >= 2:
-                contract = {
-                    "intent_name": "add",
-                    "strategy": "single_pass",
-                    "signature": "def add(a: int, b: int) -> int:",
-                    "args": real_args[:2],
-                }
-            else:
-                return {
-                    "status": "UNRECOGNIZED_INTENT",
-                    "error": f"Keelespetsialist ei suutnud tuvastada lepingut päringule: '{user_query}'",
-                    "query": user_query,
-                }
+            return {
+                "status": "UNRECOGNIZED_INTENT",
+                "error": f"Keelespetsialist ei suutnud tuvastada lepingut päringule: '{user_query}'",
+                "query": user_query,
+            }
 
         intent_name = contract.get("intent_name", "custom_intent")
         signature = contract.get("signature", "def func(a: int, b: int) -> int:")
+        conf_margin = float(contract.get("confidence_margin", 0.0))
 
         # Argument binding logic
         expected_n = get_expected_args_count(signature) or 2
@@ -353,6 +404,28 @@ class CouncilDispatcher(BaseDispatcher):
         strategy = contract.get("strategy", "single_pass")
         args = contract.get("args", [])
 
+        # 5. Confidence Gate Check: if model hesitated below min_exec_margin, ask confirmation instead of poisoning!
+        if conf_margin < self.min_exec_margin:
+            contract["_awaiting_confirmation"] = True
+            contract["_original_query"] = user_query
+            return {
+                "status": "NEED_CONFIRMATION",
+                "mode": "execute",
+                "route": "CONFIDENCE_GATE_BLOCKED",
+                "intent": contract,
+                "intent_id": intent_name,
+                "intent_name": intent_name,
+                "signature": signature,
+                "args": args,
+                "confidence_margin": conf_margin,
+                "cache_hit": False,
+                "message": (
+                    f"Madal mudeli kindlus ({conf_margin * 100:.1f}%). "
+                    f"Kas pidasid silmas tehet '{intent_name}' ({signature}) argumentidega {args}?"
+                ),
+                "query": user_query,
+            }
+
         # If slot filling is required
         if strategy == "need_input" or (not is_synth and len(args) < expected_n):
             return {
@@ -363,6 +436,7 @@ class CouncilDispatcher(BaseDispatcher):
                 "intent_name": intent_name,
                 "provided_args": args,
                 "expected_count": expected_n,
+                "confidence_margin": conf_margin,
                 "message": (
                     f"Kavatsus '{intent_name}' vajab {expected_n} arvu "
                     f"(leiti {len(args)}). Palun sisesta puuduvad {expected_n - len(args)} arvu."
@@ -394,6 +468,7 @@ class CouncilDispatcher(BaseDispatcher):
                 "intent_id": intent_name,
                 "intent_name": intent_name,
                 "signature": signature,
+                "confidence_margin": conf_margin,
                 "generated_code": full_code,
                 "generation_latency_s": gen_lat_s,
                 "message": f"Genereeritud puhas funktsioonikood kavatsusele '{intent_name}'.",
@@ -408,4 +483,5 @@ class CouncilDispatcher(BaseDispatcher):
             user_query=user_query,
             neural_gen_lat_s=infer_lat_s,
             cache_hit=False,
+            confidence_margin=conf_margin,
         )

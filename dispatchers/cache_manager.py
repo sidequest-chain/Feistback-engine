@@ -1,9 +1,16 @@
 """
-Self-Hydrating L1 Intent Cache Manager (RFC-002 Tier 1)
-=======================================================
-Provides an LRU-bounded persistent cache (`cache/learned_intents.json`) for storing
-natural language query patterns resolved by the Tier 2 Language Expert (`eesti_keele_sl2ng`)
-and strictly verified by Tier 3 (`MiniStackVM` Double-Lock Verification Gate).
+Layer A Semantic Intent Cache Manager (RFC-002 Tier 1)
+======================================================
+Provides an LRU-bounded cache (`cache/learned_intents.json`) for storing natural
+language query patterns resolved by the Tier 2 Language Expert (`eesti_keele_sl2ng`).
+
+Protections against Cache Poisoning & Ecosystem Drift:
+1. Model Hash Binding (`model_hash`): Automatically invalidates cached patterns
+   whenever the specialist `.pt`/`.feist` model weights are updated.
+2. Confidence Margin Gate (`min_confidence_margin`): Refuses to cache predictions
+   where the neural model hesitated between top-1 and top-2 token choices.
+3. VM Verification Gate (`verified_by_vm`): Refuses to cache unless `MiniStackVM`
+   confirmed deterministic execution parity.
 """
 
 from __future__ import annotations
@@ -13,7 +20,7 @@ import json
 from pathlib import Path
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 
 _NUM_TOKEN_PATTERN = re.compile(r"-?\d+(?:[.,]\d+)?|0x[0-9a-fA-F]+", re.IGNORECASE)
@@ -37,15 +44,17 @@ def compute_pattern_hash(pattern: str, args_count: int) -> str:
 
 class LearnedIntentCache:
     """
-    Thread-safe, LRU-bounded L1 intent cache backed by `cache/learned_intents.json`.
-    Enforces the Double-Lock Verification Gate: entries are only persisted if
-    `verified_by_vm=True`.
+    LRU-bounded Layer A intent cache backed by `cache/learned_intents.json`.
+    Enforces both the Confidence Margin Gate (`confidence_margin >= min_confidence_margin`)
+    and the VM Verification Gate (`verified_by_vm=True`), bound to `model_hash`.
     """
 
     def __init__(
         self,
         cache_path: str = "cache/learned_intents.json",
         max_entries: int = 500,
+        model_hash: str = "default",
+        min_confidence_margin: float = 0.85,
     ) -> None:
         p = Path(cache_path)
         if not p.is_absolute():
@@ -53,21 +62,28 @@ class LearnedIntentCache:
             p = repo_root / cache_path
         self.cache_path = p
         self.max_entries = max_entries
+        self.model_hash = model_hash
+        self.min_confidence_margin = min_confidence_margin
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._load()
 
     def _load(self) -> None:
-        """Loads cached intent entries from disk if present."""
+        """Loads cached intent entries from disk if present and matching `model_hash`."""
         self._entries.clear()
         if not self.cache_path.exists():
             return
         try:
             with open(self.cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            stored_hash = data.get("model_hash", "default")
+            if self.model_hash != "default" and stored_hash != "default" and stored_hash != self.model_hash:
+                # Specialist model changed; invalidate stale learned intents
+                return
             self.max_entries = int(data.get("max_entries", self.max_entries))
             for entry in data.get("entries", []):
                 q_hash = entry.get("query_hash")
-                if q_hash and entry.get("verified_by_vm") is True:
+                margin = float(entry.get("confidence_margin", 1.0))
+                if q_hash and entry.get("verified_by_vm") is True and margin >= self.min_confidence_margin:
                     self._entries[q_hash] = entry
         except Exception:
             self._entries.clear()
@@ -82,6 +98,8 @@ class LearnedIntentCache:
                 reverse=True,
             )[: self.max_entries]
             payload = {
+                "model_hash": self.model_hash,
+                "min_confidence_margin": self.min_confidence_margin,
                 "max_entries": self.max_entries,
                 "entries": sorted_entries,
             }
@@ -115,13 +133,17 @@ class LearnedIntentCache:
         target_signature: str,
         args_count: int,
         verified_by_vm: bool,
+        confidence_margin: float = 1.0,
         execution_strategy: str = "single_pass",
     ) -> bool:
         """
-        Persists a newly resolved intent pattern into the L1 cache strictly if
-        `verified_by_vm` is True (Double-Lock Verification Gate).
+        Persists a newly resolved intent pattern into the L1 cache strictly if:
+        1. `verified_by_vm` is True, AND
+        2. `confidence_margin >= self.min_confidence_margin` (Confidence Gate).
         """
         if not verified_by_vm:
+            return False
+        if confidence_margin < self.min_confidence_margin:
             return False
 
         pattern = normalize_query_pattern(query)
@@ -132,6 +154,7 @@ class LearnedIntentCache:
             existing = self._entries[q_hash]
             existing["last_accessed"] = now_ts
             existing["hit_count"] = int(existing.get("hit_count", 0)) + 1
+            existing["confidence_margin"] = round(float(confidence_margin), 4)
         else:
             if len(self._entries) >= self.max_entries:
                 oldest_key = min(
@@ -147,6 +170,7 @@ class LearnedIntentCache:
                 "target_signature": target_signature,
                 "execution_strategy": execution_strategy,
                 "args_count": args_count,
+                "confidence_margin": round(float(confidence_margin), 4),
                 "last_accessed": now_ts,
                 "hit_count": 1,
                 "verified_by_vm": True,

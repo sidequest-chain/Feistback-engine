@@ -1,26 +1,24 @@
 """
-Feistback Core Runtime Package
-==============================
-Couples PureFeistelLM neuro-symbolic execution with MiniStackVM and ASTCompiler.
+Feistback Runtime Package
+=========================
+Provides the core execution engine, AST compiler, canonicalizer,
+Layer B JIT bytecode cache, MiniStackVM, and Feistel neural models.
 """
 
+from runtime.bytecode_cache import BytecodeCache, compute_file_sha256
 from runtime.canonicalizer import canonicalize_signature, decanonicalize_code
-from runtime.engine import FeistbackEngine, EngineResult, TestOutcome
-from runtime.compiler import ASTCompiler
-from runtime.vm.ministack_vm import MiniStackVM, RuntimeExecutionError
-from runtime.vm.opcodes import OpCode
-from runtime.models.pure_feistel_lm import PureFeistelLM
+from runtime.compiler import ASTCompiler, compile_to_vm
+from runtime.engine import EngineResult, FeistbackEngine, TestOutcome
 from runtime.registry import ModelRegistry
 
 __all__ = [
     "FeistbackEngine",
     "EngineResult",
     "TestOutcome",
+    "BytecodeCache",
+    "compute_file_sha256",
     "ASTCompiler",
-    "MiniStackVM",
-    "RuntimeExecutionError",
-    "OpCode",
-    "PureFeistelLM",
+    "compile_to_vm",
     "ModelRegistry",
     "canonicalize_signature",
     "decanonicalize_code",

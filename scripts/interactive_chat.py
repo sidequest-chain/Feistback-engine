@@ -2,15 +2,14 @@
 Interactive CLI for Feistback Neuro-Symbolic Intent Dispatcher
 ==============================================================
 Provides an interactive command-line interface for communicating with the
-Feistback neuro-symbolic engine via ConfigDispatcher in real time, displaying
-intent matching, generated Python code, disassembled MiniStackVM bytecode,
-and verified deterministic execution results.
+Feistback neuro-symbolic engine via ConfigDispatcher or CouncilDispatcher in real time,
+displaying intent matching, generated Python code, disassembled MiniStackVM bytecode,
+Confidence Gate protection, and verified deterministic execution results.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 import sys
 import time
@@ -94,7 +93,15 @@ def process_query(
 
     status = resp.get("status")
 
-    if status == "NEED_INPUT":
+    if status == "NEED_CONFIRMATION":
+        print(f"  [Status]      : NEED_CONFIRMATION (Confidence Gate kaitse)")
+        print(f"  [Candidate]   : {resp.get('intent_name')} -> {resp.get('signature')}")
+        print(f"  [Confidence]  : {resp.get('confidence_margin', 0.0) * 100.0:.1f}%")
+        print(f"\n  Dispetšer > {resp.get('message')} (vasta 'jah' või sisesta uus käsk)\n")
+        print("-" * 80)
+        return resp.get("intent"), resp.get("args", [])
+
+    elif status == "NEED_INPUT":
         intent_info = resp.get("intent", {})
         intent_name = resp.get("intent_name", intent_info.get("name", "Tundmatu"))
         print(f"  [Status]      : NEED_INPUT (Ootel argumentide ootamine)")
@@ -127,6 +134,7 @@ def process_query(
             vm_res = resp.get("result")
             vm_lat_us = resp.get("vm_latency_us", 0.0)
             comp_lat_ms = resp.get("compilation_latency_ms", 0.0)
+            bc_hit = resp.get("bytecode_cache_hit", False)
 
             print(f"  [Intent]      : {intent_name} ({intent_id})")
             print(f"  [Arguments]   : {args}")
@@ -140,7 +148,7 @@ def process_query(
             print(
                 f"  [Performance] : VM Latency: {vm_lat_us:.2f} µs | "
                 f"Compile: {comp_lat_ms:.2f} ms | "
-                f"Neural Gen: {gen_lat_s * 1000.0:.1f} ms | "
+                f"Neural Gen: {gen_lat_s * 1000.0:.1f} ms ({'JIT Cache Hit' if bc_hit else 'Synthesized'}) | "
                 f"Total: {total_time_ms:.1f} ms"
             )
         print("-" * 80)
@@ -159,68 +167,50 @@ def process_query(
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    if hasattr(sys.stdin, "reconfigure"):
-        sys.stdin.reconfigure(encoding="utf-8")
 
     args = parse_args()
 
-    if not os.path.exists(args.checkpoint):
-        print(f"Error: Checkpoint not found at '{args.checkpoint}'", file=sys.stderr)
-        sys.exit(1)
-
     print(f"Initializing FeistbackEngine on {args.device}...")
-    engine = FeistbackEngine.from_checkpoint(args.checkpoint, device=args.device)
+    engine = FeistbackEngine.from_checkpoint(
+        checkpoint_path=args.checkpoint,
+        device=args.device,
+    )
     if args.dispatcher == "council":
-        dispatcher = CouncilDispatcher(
-            engine,
-            model_path="models/eesti_keele_sl2ng/slang_expert_feistel.pt",
-            tokenizer_path="models/eesti_keele_sl2ng/tokenizer.json",
-            device=args.device,
-        )
+        dispatcher = CouncilDispatcher(engine=engine, device=args.device)
     else:
-        dispatcher = ConfigDispatcher(engine, config_path=args.config)
-
+        dispatcher = ConfigDispatcher(engine=engine, config_path=args.config)
     print_banner(dispatcher, args.device)
 
-    is_interactive = sys.stdin.isatty()
     pending_intent: Optional[Dict[str, Any]] = None
     pending_args: List[int] = []
 
-    try:
-        while True:
-            if is_interactive:
-                try:
-                    prompt_label = "\nFeistback (ootel) > " if pending_intent else "\nFeistback > "
-                    user_input = input(prompt_label)
-                except (EOFError, KeyboardInterrupt):
-                    print("\nExiting Feistback Chat. Goodbye!")
-                    break
-            else:
-                line = sys.stdin.readline()
-                if not line:
-                    break
-                user_input = line
+    while True:
+        try:
+            prompt_prefix = "\nFeistback (ootel) > " if pending_intent else "\nFeistback > "
+            user_input = input(prompt_prefix).strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting Feistback Chat CLI.")
+            break
 
-            query = user_input.strip().lstrip("\ufeff")
-            if not query:
-                continue
+        if not user_input:
+            continue
 
-            if pending_intent is not None and query.lower() in ("tühista", "cancel", "exit"):
-                print("\n  Dispetšer > Ootel päring tühistatud.\n")
-                pending_intent = None
-                pending_args = []
-                continue
+        if user_input.lower() in {"quit", "exit", ":q"}:
+            print("Exiting Feistback Chat CLI.")
+            break
 
-            if query.lower() in ("exit", "quit", "q"):
-                print("Exiting Feistback Chat. Goodbye!")
-                break
+        if user_input.lower() in {"cancel", "tühista", "reset"}:
+            pending_intent = None
+            pending_args = []
+            print("Ootel kavatsus tühistatud.")
+            continue
 
-            pending_intent, pending_args = process_query(
-                dispatcher, query, pending_intent=pending_intent, pending_args=pending_args
-            )
-
-    except KeyboardInterrupt:
-        print("\nSession interrupted. Exiting.")
+        pending_intent, pending_args = process_query(
+            dispatcher,
+            user_input,
+            pending_intent=pending_intent,
+            pending_args=pending_args,
+        )
 
 
 if __name__ == "__main__":
